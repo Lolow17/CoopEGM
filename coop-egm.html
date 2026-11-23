@@ -402,9 +402,8 @@ window.CoopXLSX=(()=>{const enc=new TextEncoder();const xml=x=>String(x??'').rep
 'use strict';
 /* =====================================================================
    CONFIGURATION
-   Coller ici l'URL /exec du déploiement Apps Script (ou la saisir dans
-   l'appli : pastille en haut à droite > Adresse du script).
-   Vide = mode local (données sur l'appareil uniquement).
+   URL /exec du déploiement Apps Script. Elle est imposée : elle ne peut
+   pas être changée depuis l'appli. Pour en changer, modifier cette ligne.
    ===================================================================== */
 const API_URL = 'https://script.google.com/macros/s/AKfycbzNiOgtGjvhYXKW9JFmSyw03lhLaJfxmTe5w0RrXiR4-MlLp5QSf3YlYQFIBSpQRzUpuQ/exec';
 
@@ -446,7 +445,9 @@ function tabAdd(s,name,delta,at){const k=tabKey(name);if(!k)return;const t=s.tab
 
 /* ---------- Configuration locale ---------- */
 let cfg=load(K.cfg,{});
-const apiUrl=()=>String(cfg.api!==undefined?cfg.api:API_URL).trim();
+/* Adresse du script imposée : on ignore toute adresse enregistrée autrefois sur l'appareil */
+if(cfg.api!==undefined){delete cfg.api;store(K.cfg,cfg);}
+const apiUrl=()=>API_URL.trim();
 const isLocal=()=>!apiUrl();
 const dbKey=()=>isLocal()?'coopegm3_db_local':'coopegm3_db_srv';
 
@@ -804,17 +805,12 @@ function exportXlsx(range){range=range||periodRange();if(!range)return;const [a,
 /* ---------- Connexion et poste ---------- */
 function connSheet(){const s=sheet(`<h3>Connexion et poste</h3><p class="mut small">${isLocal()?'Mode local : les données restent sur cet appareil. Collez l’adresse du script Google pour partager la caisse entre plusieurs appareils.':`Base Google Sheet. ${queue.length} opération(s) en attente.${lastSync?' Dernière synchro '+tLabel(lastSync)+'.':''}${syncErr?' Erreur : '+esc(syncErr)+'.':''}`}</p>
   <label class="fld"><span>Nom de ce poste</span><input id="kDev" value="${esc(cfg.device||'')}" placeholder="Ex. iPad bar"></label>
-  <label class="fld"><span>Adresse du script Apps Script (finit par /exec)</span><input id="kApi" value="${esc(apiUrl())}" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
-  <div class="cols2"><button class="btn ghost" id="kTest">Tester l’adresse</button><button class="btn ghost" id="kSync"${isLocal()?' disabled':''}>Synchroniser</button></div>
+  <div class="cols2"><button class="btn ghost" id="kTest">Tester la connexion</button><button class="btn ghost" id="kSync"${isLocal()?' disabled':''}>Synchroniser</button></div>
   <div class="acts"><button class="btn ghost" data-x>Fermer</button><button class="btn pri" id="kSave">Enregistrer</button></div>`);
   const E=x=>$(x,s.el);
-  E('#kTest').onclick=async()=>{const u=E('#kApi').value.trim();if(!u)return toast('Adresse vide.');try{const r=await apiGet(u);if(!r.ok)throw new Error(r.error||'Réponse invalide');if(r.locked)return toast('Connexion réussie · codes d’accès activés sur ce script');toast(`Connexion réussie · ${r.state.products.length} article(s) dans le Sheet`);}catch(e){toast('Échec : '+e.message,null,6000);}};
+  E('#kTest').onclick=async()=>{try{const r=await apiGet();if(!r.ok)throw new Error(r.error||'Réponse invalide');if(r.locked)return toast('Connexion réussie · codes d’accès activés sur ce script');toast(`Connexion réussie · ${r.state.products.length} article(s) dans le Sheet`);}catch(e){toast('Échec : '+e.message,null,6000);}};
   E('#kSync').onclick=()=>{s.close();flush();};
-  E('#kSave').onclick=async()=>{const u=E('#kApi').value.trim();cfg.device=E('#kDev').value.trim();
-    if(u!==apiUrl()){if(queue.length&&!(await ask({title:'Opérations non envoyées',text:`${queue.length} opération(s) n’ont pas encore été envoyées et seront perdues si vous changez d’adresse.`,ok:'Changer quand même',danger:true})))return;
-      cfg.api=u;store(K.cfg,cfg);queue=[];store(K.q,queue);syncErr='';lastSync=null;store(K.last,null);try{sessionStorage.removeItem(K.pin);sessionStorage.removeItem(K.role);}catch(e){}
-      db=normalize(load(dbKey(),null)||(isLocal()?demoDb():emptyDb()));view=isLocal()?db:derive();cart=[];s.close();boot();toast(isLocal()?'Mode local activé':'Adresse enregistrée · synchronisation');}
-    else{store(K.cfg,cfg);s.close();setSync();toast('Enregistré');}};}
+  E('#kSave').onclick=()=>{cfg.device=E('#kDev').value.trim();store(K.cfg,cfg);s.close();setSync();toast('Enregistré');};}
 
 /* ---------- Événements ---------- */
 document.addEventListener('click',e=>{const t=e.target.closest('[data-tab]');if(t)go(t.dataset.tab);});
