@@ -37,6 +37,11 @@
 const PERIODE_JOURS = 120;          // historique renvoyé à l'appli
 const METHODES = ['Espèces', 'Carte', 'Virement', 'Autre', 'Ardoise'];
 const REGLEMENT = ['Espèces', 'Carte', 'Virement'];   // moyens acceptés pour solder une ardoise
+
+/* CODES D'ACCÈS — s'ils sont remplis ici, ils sont utilisés en priorité (l'onglet Config est ignoré).
+ * Laisser vide ('') pour lire les lignes PIN / PIN_CAISSE de l'onglet Config. */
+const CODE_ADMIN = '';    // accès à tout
+const CODE_CAISSE = '';   // Caisse, Ardoises, Clôture
 const HEAD = {
   Config:      ['cle', 'valeur', 'aide'],
   Produits:    ['id', 'nom', 'categorie', 'mode', 'contenance', 'seuil', 'couleur', 'ordre', 'actif', 'formats', 'stock', 'stock_lisible'],
@@ -134,15 +139,19 @@ function eur(n) { return money(n).toFixed(2).replace('.', ',') + ' €'; }
 function cleanName(v) { return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').slice(0, 60); }
 function tabKey(v) { return cleanName(v).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); } // « Élodie » = « elodie »
 /* Rôle donné par un code : 'admin', 'caisse' ou '' (refusé) */
+/* Codes en vigueur : ceux écrits en haut du script s'ils sont remplis, sinon ceux de l'onglet Config */
+function codes(conf) {
+  return { admin: String(CODE_ADMIN || conf.PIN || '').trim(), caisse: String(CODE_CAISSE || conf.PIN_CAISSE || '').trim() };
+}
 function roleOf(code, conf) {
-  const a = String(conf.PIN || '').trim(), k = String(conf.PIN_CAISSE || '').trim(), p = String(code || '').trim();
+  const c = codes(conf), a = c.admin, k = c.caisse, p = String(code || '').trim();
   if (!a) return 'admin';
   if (p && p === a) return 'admin';
   if (!k) return 'caisse';
   if (p && p === k) return 'caisse';
   return '';
 }
-function config() { const o = {}; rows('Config').forEach(function (r) { o[String(r.cle)] = r.valeur; }); return o; }
+function config() { const o = {}; rows('Config').forEach(function (r) { o[String(r.cle).trim().toUpperCase()] = r.valeur; }); return o; } // « pin » ou « PIN » : même ligne
 function setConfig(k, v) {
   const s = sh('Config'), last = s.getLastRow();
   if (last > 1) {
@@ -419,8 +428,8 @@ function state() {
     audit: rows('Journal').slice(-200).reverse().map(function (r) {
       return { at: iso(r.date), type: String(r.type), description: String(r.detail), reference: String(r.ref || ''), device: String(r.poste || '') };
     }),
-    pinSet: !!String(config().PIN || '').trim(),
-    cashierPinSet: !!String(config().PIN_CAISSE || '').trim(),
+    pinSet: !!codes(config()).admin,
+    cashierPinSet: !!codes(config()).caisse,
     serverTime: new Date().toISOString()
   };
 }
