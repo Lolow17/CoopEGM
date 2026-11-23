@@ -188,6 +188,21 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),li
 .toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--top) + var(--st) + 12px);background:#f3f4f6;color:#0d0f13;padding:12px 12px 12px 18px;border-radius:15px;display:flex;gap:14px;align-items:center;font-weight:600;z-index:90;box-shadow:0 12px 34px rgba(0,0,0,.55);max-width:94vw;animation:fade .15s}
 .toast span{flex:1}.toast button{background:#0d0f13;color:#fff;padding:10px 15px;border-radius:11px;font-weight:700;flex-shrink:0}
 #print{display:none}
+.lockb{margin-left:0}.lockb svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.lock{position:fixed;top:0;left:0;right:0;bottom:0;z-index:55;background:var(--bg);display:none;align-items:center;justify-content:center;padding:20px 16px calc(20px + var(--sb))}
+.lock.on{display:flex}
+.lockBox{width:100%;max-width:340px;text-align:center}
+.lockBox .brand{font-size:36px}
+.lockBox p{margin:10px 0 4px}
+.dots{display:flex;justify-content:center;gap:12px;height:20px;margin:14px 0 6px}
+.dots i{width:16px;height:16px;border-radius:50%;border:2px solid var(--mut)}
+.dots i.f{background:var(--acc);border-color:var(--acc)}
+.lockMsg{min-height:40px;color:var(--mut);font-size:14px;margin:4px 0 8px}
+.lockMsg.bad{color:var(--bad)}
+.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.keys button{height:66px;border-radius:16px;background:var(--p2);font-family:var(--fc);font-size:30px;font-weight:700}
+.keys button:active{background:var(--acc);color:var(--acc-ink)}
+.keys button.ok{background:var(--acc);color:var(--acc-ink);font-size:22px}
 
 /* ---------- Téléphone / iPad portrait étroit ---------- */
 @media (max-width:860px){
@@ -235,6 +250,7 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),li
   <div class="brand">Coop'<span>EGM</span><small id="posteName">Caisse</small></div>
   <nav class="tabs" id="tabs"></nav>
   <button class="sync" id="sync"><i class="dot"></i><em>…</em></button>
+  <button class="sync lockb" id="lockBtn" aria-label="Verrouiller"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><em id="roleName"></em></button>
 </header>
 
 <main>
@@ -360,13 +376,21 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),li
       <div class="cols2" id="xCustom" style="display:none"><label class="fld"><span>Du</span><input type="date" id="xFrom"></label><label class="fld"><span>Au</span><input type="date" id="xTo"></label></div>
       <p class="small mut" id="xNote"></p>
       <button class="btn pri full" id="xXlsx">Exporter le classeur Excel (.xlsx)</button>
-      <button class="btn ghost full" id="xLock">Verrouiller la gestion</button>
+      <button class="btn ghost full" id="xLock">Verrouiller l’appli</button>
     </div>
     <div class="card"><h2>Journal</h2><div class="list" id="aList"></div></div>
   </div></section>
 </main>
 
 <nav class="tabbar" id="tabbar"></nav>
+<div class="lock" id="lock"><div class="lockBox">
+  <div class="brand">Coop'<span>EGM</span></div>
+  <p class="mut">Saisissez votre code caisse ou admin</p>
+  <div class="dots" id="lockDots"></div>
+  <div class="lockMsg" id="lockMsg"></div>
+  <div class="keys" id="lockKeys"><button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button data-k="del" aria-label="Effacer">⌫</button><button data-k="0">0</button><button data-k="ok" class="ok">OK</button></div>
+  <button class="lnk" id="lockConn" style="margin-top:18px">Connexion et poste</button>
+</div></div>
 <div id="print"></div>
 
 <script>
@@ -402,7 +426,7 @@ const clone=o=>JSON.parse(JSON.stringify(o));
 const METHODS=['Espèces','Carte','Virement','Ardoise'];
 const PAYS=['Espèces','Carte','Virement'],PAYCLS={'Espèces':'cash','Carte':'card','Virement':'tr'};
 const COLORS=['#f2b544','#e8743b','#e0484f','#c94f9b','#7a5cff','#3d7bf2','#2bb3c0','#39c98a','#8fbf3a','#9aa3b2'];
-const K={cfg:'coopegm3_cfg',q:'coopegm3_queue',last:'coopegm3_last',pin:'coopegm3_pin'};
+const K={cfg:'coopegm3_cfg',q:'coopegm3_queue',last:'coopegm3_last',pin:'coopegm3_pin',role:'coopegm3_role',codes:'coopegm3_codes'};
 function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
 function store(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){toast('Mémoire de l’appareil pleine.');}}
 function tint(hex,a){let h=String(hex||'#9aa3b2').replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16)||0;return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}
@@ -463,7 +487,7 @@ function applyOp(s,op){const d=op.data||{};
 }
 function derive(){const v=clone(db);queue.forEach(op=>applyOp(v,op));return v;}
 
-function commit(type,data){const op={opId:uid(),type,data,at:new Date().toISOString(),pin:pin()};
+function commit(type,data,opPin){const op={opId:uid(),type,data,at:new Date().toISOString(),pin:opPin==null?pin():opPin};
   if(isLocal()){applyOp(db,op);store(dbKey(),db);view=db;}
   else{queue.push(op);store(K.q,queue);applyOp(view,op);scheduleFlush(350);}
   refresh();}
@@ -473,28 +497,55 @@ async function api(body){const ctl=new AbortController();const t=setTimeout(()=>
 async function apiGet(url){const u=url||apiUrl();const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),30000);try{const r=await fetch(u+(u.indexOf('?')>=0?'&':'?')+'action=state&_='+Date.now(),{signal:ctl.signal});return await r.json();}catch(e){throw new Error(e.name==='AbortError'?'Délai dépassé':'Réseau indisponible');}finally{clearTimeout(t);}}
 function scheduleFlush(ms){clearTimeout(flushTimer);flushTimer=setTimeout(flush,ms);}
 function setServer(state){db=normalize(state);store(dbKey(),db);lastSync=new Date().toISOString();store(K.last,lastSync);view=derive();refresh();}
-async function flush(){if(isLocal()||flushing)return;if(!queue.length)return pull();flushing=true;setSync();const batch=queue.slice(0,30);
-  try{const res=await api({action:'ops',ops:batch,device:cfg.device||''});if(!res||!res.ok)throw new Error((res&&res.error)||'Réponse invalide');
+async function flush(){if(isLocal()||flushing||!role())return;if(!queue.length)return pull();flushing=true;setSync();const batch=queue.slice(0,30);
+  try{const res=await api({action:'ops',ops:batch,device:cfg.device||'',pin:pin()});if(res&&res.auth){lockApp('Code modifié ou expiré : saisissez votre code. Les ventes en attente seront envoyées ensuite.');return;}if(!res||!res.ok)throw new Error((res&&res.error)||'Réponse invalide');
     const sent=new Set(batch.map(o=>o.opId));queue=queue.filter(o=>!sent.has(o.opId));store(K.q,queue);syncErr='';
     const fails=(res.results||[]).filter(r=>!r.ok);setServer(res.state);
     if(fails.length)toast('Refusé : '+fails.map(f=>f.error).join(' / '),null,7000);}
   catch(e){syncErr=e.message||'Erreur';}
   finally{flushing=false;setSync();if(queue.length)scheduleFlush(syncErr?8000:300);}}
-async function pull(){if(isLocal()||flushing||queue.length)return;flushing=true;setSync();try{const r=await apiGet();if(!r||!r.ok)throw new Error((r&&r.error)||'Réponse invalide');syncErr='';flushing=false;setServer(r.state);}catch(e){syncErr=e.message;}finally{flushing=false;setSync();}}
+async function pull(){if(isLocal()||flushing||queue.length||!role())return;flushing=true;setSync();try{let r=await api({action:'state',pin:pin()});if(r&&r.error==='Action inconnue')r=await apiGet();if(r&&r.auth){flushing=false;lockApp('Code modifié ou expiré : saisissez votre code.');return;}if(!r||!r.ok)throw new Error((r&&r.error)||'Réponse invalide');syncErr='';flushing=false;setServer(r.state);}catch(e){syncErr=e.message;}finally{flushing=false;setSync();}}
 function setSync(){const el=$('#sync');let c,t;
   if(isLocal()){c='local';t='Mode local';}
   else if(flushing){c='sending';t=queue.length?`Envoi de ${queue.length}…`:'Synchro…';}
   else if(syncErr){c='offline';t=queue.length?`Hors ligne · ${queue.length} en attente`:'Hors ligne';}
   else if(queue.length){c='pending';t=`${queue.length} en attente`;}
   else{c='ok';t=lastSync?`Synchro ${hm(lastSync)}`:'Connexion…';}
-  el.className='sync '+c;$('em',el).textContent=t;$('#posteName').textContent=cfg.device||'Caisse';}
+  el.className='sync '+c;$('em',el).textContent=t;$('#posteName').textContent=cfg.device||'Caisse';
+  $('#lockBtn').style.display=isLocal()?'none':'';$('#roleName').textContent=isAdmin()?'Admin':'Caisse';}
 
-/* ---------- Code gestionnaire ---------- */
+/* ---------- Codes d'accès : admin (tout) / caisse (Caisse, Ardoises, Clôture) ---------- */
 function pin(){try{return sessionStorage.getItem(K.pin)||'';}catch(e){return '';}}
-async function requireAdmin(){if(isLocal()||!db.pinSet||pin())return true;
-  const p=await askText({title:'Code gestionnaire',label:'Code',type:'password',ok:'Valider',inputmode:'numeric'});if(p==null)return false;
-  try{const r=await api({action:'pin',pin:p});if(r.ok){try{sessionStorage.setItem(K.pin,p);}catch(e){}return true;}toast('Code incorrect.');return false;}
-  catch(e){toast('Vérification impossible : '+e.message);return false;}}
+function role(){if(isLocal())return 'admin';try{return sessionStorage.getItem(K.role)||'';}catch(e){return '';}}
+const isAdmin=()=>role()==='admin';
+const ROLE_TABS={caisse:['pos','ardo','close']};
+const allowed=t=>isAdmin()||(ROLE_TABS[role()]||[]).indexOf(t)>=0;
+async function codeHash(c){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(apiUrl()+'|'+c));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}catch(e){return '';}}
+/* Vérifie un code auprès du script. Hors ligne : dernier résultat connu sur cet appareil (empreinte, jamais le code en clair). */
+async function checkCode(c){const h=await codeHash(c),known=load(K.codes,{});
+  try{const r=await api({action:'pin',pin:c});const ro=r&&r.ok?(r.role||'admin'):'';
+    if(h){if(ro)known[h]=ro;else delete known[h];store(K.codes,known);}return ro;}
+  catch(e){if(h&&known[h])return known[h];throw e;}}
+function setRole(c,r){try{sessionStorage.setItem(K.pin,c);sessionStorage.setItem(K.role,r);}catch(e){}}
+/* Code admin demandé pour une seule action (annulation ancienne), sans passer l'appareil en admin */
+async function adminCode(){if(isAdmin())return pin();
+  const c=await askText({title:'Code admin',text:'Cette action est réservée à l’admin.',label:'Code admin',type:'password',ok:'Valider',inputmode:'numeric'});if(c==null)return null;
+  try{if(await checkCode(c)==='admin')return c;toast('Code admin incorrect.');}catch(e){toast('Vérification impossible : '+e.message);}return null;}
+let lockCode='',unlocking=false;
+function drawLock(msg,bad){$('#lockDots').innerHTML=Array.from({length:Math.max(4,lockCode.length)},(_,i)=>`<i class="${i<lockCode.length?'f':''}"></i>`).join('');if(msg!=null){const m=$('#lockMsg');m.textContent=msg;m.className='lockMsg'+(bad?' bad':'');}}
+function showLock(msg,bad){lockCode='';closeTicket();$$('.ov,.toast').forEach(o=>o.remove());$('#lock').classList.add('on');drawLock(msg||'',bad);}
+function lockApp(msg){try{sessionStorage.removeItem(K.pin);sessionStorage.removeItem(K.role);}catch(e){}showLock(msg||'');setSync();}
+function enter(msg){$('#lock').classList.remove('on');renderTabs();setSync();go(allowed(cur)?cur:'pos');flush();if(msg)toast(msg);}
+async function tryUnlock(){if(unlocking||!lockCode)return;unlocking=true;drawLock('Vérification…');
+  try{const r=await checkCode(lockCode);if(r){setRole(lockCode,r);enter(r==='admin'?'Accès admin : tout est accessible':'Accès caisse');}else{lockCode='';drawLock('Code incorrect.',true);}}
+  catch(e){lockCode='';drawLock('Pas de connexion : ce code n’a jamais été utilisé sur cet appareil, impossible de le vérifier.',true);}
+  finally{unlocking=false;}}
+function lockKey(k){if(unlocking)return;if(k==='ok')return tryUnlock();if(k==='del')lockCode=lockCode.slice(0,-1);else if(lockCode.length<12)lockCode+=k;drawLock('');}
+/* Démarrage : si le script ne demande aucun code, on entre directement */
+async function boot(){renderTabs();setSync();if(isLocal()||role())return enter();
+  showLock('Connexion…');
+  try{const r=await checkCode('');if(r){setRole('',r);return enter();}drawLock('');}
+  catch(e){drawLock('Hors ligne : saisissez un code déjà utilisé sur cet appareil.');}}
 
 /* ---------- Feuilles, confirmations, messages ---------- */
 function sheet(html,opt={}){const ov=document.createElement('div');ov.className='ov';ov.innerHTML=`<div class="sh${opt.wide?' wide':''}">${html}</div>`;document.body.append(ov);let closed=false;
@@ -514,8 +565,8 @@ function renderAll(){renderPos();if(cur==='ardo')renderArdo();if(cur==='recv')re
 
 const ICONS={ardo:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',pos:'<rect x="3" y="9" width="18" height="11" rx="2"/><path d="M7 9V5h10v4M7 14h2M11 14h2M15 14h2M7 17h10"/>',recv:'<path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',stock:'<path d="M5 20V11M12 20V4M19 20v-6"/>',close:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',manage:'<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'};
 const TABS=[['pos','Caisse'],['ardo','Ardoises'],['recv','Réception'],['stock','Stock'],['close','Clôture'],['manage','Gestion']];
-function renderTabs(){const h=TABS.map(([k,l])=>`<button data-tab="${k}"><svg viewBox="0 0 24 24">${ICONS[k]}</svg><span>${l}</span></button>`).join('');$('#tabs').innerHTML=h;$('#tabbar').innerHTML=h;}
-async function go(tab){if(tab==='manage'&&!(await requireAdmin()))return;cur=tab;$$('[data-tab]').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));$$('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+tab));closeTicket();refresh(true);const v=$('#v-'+tab);if(v&&tab!=='pos')v.scrollTop=0;}
+function renderTabs(){const vis=TABS.filter(([k])=>allowed(k));$('#tabbar').style.gridTemplateColumns=`repeat(${vis.length},1fr)`;const h=vis.map(([k,l])=>`<button data-tab="${k}"><svg viewBox="0 0 24 24">${ICONS[k]}</svg><span>${l}</span></button>`).join('');$('#tabs').innerHTML=h;$('#tabbar').innerHTML=h;}
+async function go(tab){if(!allowed(tab))tab='pos';cur=tab;$$('[data-tab]').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));$$('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+tab));closeTicket();refresh(true);const v=$('#v-'+tab);if(v&&tab!=='pos')v.scrollTop=0;}
 
 /* ---------- Caisse ---------- */
 function sortP(a,b){return (a.order||0)-(b.order||0)||a.name.localeCompare(b.name,'fr');}
@@ -584,18 +635,18 @@ function ardoDetail(key){const t=view.tabs[key];if(!t)return;const bal=t.balance
 function settle(name,amount,method){const id=uid();commit('settle',{id,at:new Date().toISOString(),day:dayKey(),client:name,method,amount,device:cfg.device||''});
   toast(`${eur(amount)} réglé par ${name} · ${method}`,{label:'Annuler',fn:()=>{commit('settlevoid',{id,reason:'Annulation immédiate',quick:true});toast('Règlement annulé · montant remis sur l’ardoise');}},7000);}
 async function voidSettle(id){const x=view.settlements.find(r=>r.id===id);if(!x||x.status!=='valide')return;const quick=Date.now()-new Date(x.at).getTime()<4.5*60000;
-  if(!quick&&!(await requireAdmin()))return;
+  let opPin=pin();if(!quick){opPin=await adminCode();if(opPin==null)return;}
   const reason=await askText({title:`Annuler le règlement de ${eur(x.amount)}`,text:'Le montant est remis sur l’ardoise. Aucun remboursement n’est fait automatiquement.',label:'Motif (obligatoire)',placeholder:'Erreur de saisie, mauvais moyen de paiement…',ok:'Annuler le règlement',danger:true});
-  if(!reason)return;commit('settlevoid',{id,reason,quick});toast('Règlement annulé · montant remis sur l’ardoise');}
+  if(!reason)return;commit('settlevoid',{id,reason,quick},opPin);toast('Règlement annulé · montant remis sur l’ardoise');}
 function openTicket(){$('#ticket').classList.add('open');$('#tBack').classList.add('open');}
 function closeTicket(){$('#ticket').classList.remove('open');$('#tBack').classList.remove('open');}
 function ticketsSheet(){const today=dayKey();const list=view.sales.filter(x=>saleDay(x)===today).slice().reverse();const ok=list.filter(x=>x.status==='valide');
   const s=sheet(`<h3>Tickets du jour</h3><p class="mut">${ok.length} ticket(s) · ${eur(ok.reduce((a,x)=>a+x.total,0))}</p><div class="list">${list.slice(0,80).map(x=>`<div class="it"><div style="min-width:0"><b class="num" style="font-size:22px">${eur(x.total)}</b> <span class="pill">${esc(x.method)}${x.client?' · '+esc(x.client):''}</span> ${x.status==='annulee'?'<span class="pill bad">Annulé</span>':''}<div class="small mut">${hm(x.at)}${x.device?' · '+esc(x.device):''} · ${esc(x.items.map(i=>i.qty+' × '+i.article+' '+i.format).join(', '))}</div>${x.voidReason?`<div class="small mut">Motif : ${esc(x.voidReason)}</div>`:''}</div>${x.status==='valide'?`<button class="btn ghost sm" data-void="${x.id}">Annuler</button>`:''}</div>`).join('')||'<div class="empty small">Aucun ticket aujourd’hui.</div>'}</div><div class="acts"><button class="btn" data-x>Fermer</button></div>`);
   s.el.addEventListener('click',e=>{const b=e.target.closest('[data-void]');if(b){s.close();voidSale(b.dataset.void);}});}
 async function voidSale(id){const x=view.sales.find(v=>v.id===id);if(!x||x.status!=='valide')return;const quick=Date.now()-new Date(x.at).getTime()<4.5*60000;
-  if(!quick&&!(await requireAdmin()))return;
+  let opPin=pin();if(!quick){opPin=await adminCode();if(opPin==null)return;}
   const reason=await askText({title:`Annuler le ticket de ${eur(x.total)}`,text:'Le ticket reste dans l’historique et le stock est réintégré. Aucun remboursement n’est fait automatiquement.',label:'Motif (obligatoire)',placeholder:'Erreur de saisie, remboursement…',ok:'Annuler le ticket',danger:true});
-  if(!reason)return;commit('void',{id,reason,quick});toast('Ticket annulé · stock réintégré');}
+  if(!reason)return;commit('void',{id,reason,quick},opPin);toast('Ticket annulé · stock réintégré');}
 
 /* ---------- Réception ---------- */
 function renderRecv(){const ps=view.products.filter(p=>p.active!==false).sort(sortP);
@@ -610,7 +661,7 @@ async function uploadFile(file){let type=file.type||'',name=file.name||'justific
   if(type.indexOf('image/')===0){try{data=await compressImage(file);type='image/jpeg';name=name.replace(/\.\w+$/,'')+'.jpg';}catch(e){data=await readDataURL(file);}}
   else if(type==='application/pdf')data=await readDataURL(file);else throw new Error('Format accepté : photo ou PDF');
   if(data.length>7.2e6)throw new Error('Fichier supérieur à 5 Mo');
-  const res=await api({action:'upload',name,type,data:data.split(',')[1]});if(!res.ok)throw new Error(res.error||'Échec de l’envoi');return res;}
+  const res=await api({action:'upload',pin:pin(),name,type,data:data.split(',')[1]});if(!res.ok)throw new Error(res.error||'Échec de l’envoi');return res;}
 async function saveReception(){const supplier=$('#rSup').value.trim(),amount=money(num($('#rAmt').value));const lines=Object.keys(recvDraft).filter(k=>recvDraft[k]>0).map(pid=>({pid,packages:recvDraft[pid]}));
   if(!supplier)return toast('Indiquez le fournisseur.');if(!lines.length)return toast('Ajoutez au moins un contenant reçu.');if(amount<0)return toast('Montant invalide.');
   const file=$('#rFile').files[0];let fileUrl='',fileName='';const btn=$('#rSave');
@@ -626,7 +677,7 @@ function renderStock(){const ps=view.products.filter(p=>p.active!==false).sort(s
   $('#sList').innerHTML=ps.length?cats.map(c=>`<div class="sec" style="margin-top:4px">${esc(c)}</div>`+ps.filter(p=>(p.category||'Divers')===c).map(p=>{const st=Number(view.stock[p.id])||0,low=st<=p.low;const ref=Math.max(p.low*3,p.mode==='ml'?p.packageSize*2:24,1);const pct=Math.max(0,Math.min(100,st/ref*100));
     return `<div class="srow"><div style="min-width:0"><b><span class="cdot" style="background:${p.color||'#9aa3b2'};margin-right:8px"></span>${esc(p.name)}</b><div class="small mut" style="margin-top:3px">${p.formats.map(f=>`${esc(f.name)} : ${Math.max(0,Math.floor(st/f.qty))}`).join(' · ')}</div><div class="gauge"><i class="${low?'low':''}" style="width:${pct}%"></i></div></div><div class="sv"><b class="num${low?' bad':''}">${stockMain(p,st)}</b><div class="small ${low?'bad':'mut'}">${low?'Sous le seuil':stockSub(p,st)}</div></div></div>`;}).join('')).join(''):'<div class="empty">Aucun article.</div>';
   $('#iHist').innerHTML=view.inventories.slice().reverse().slice(0,8).map(i=>{const e=(i.lines||[]).filter(l=>l.diff);return `<div class="it"><div style="min-width:0"><b>${tLabel(i.at)}</b> · ${esc(i.reason)}<div class="small mut">${e.length?esc(e.map(l=>{const p=prod(view,l.pid);const v=p&&p.mode==='ml'?fmtVol(Math.abs(l.diff)):Math.abs(l.diff)+' u.';return (l.article||'')+' '+(l.diff>0?'+':'−')+v;}).join(' · ')):'Aucun écart'}</div></div><span class="pill${e.length?' bad':''}">${e.length} écart(s)</span></div>`;}).join('')||'<div class="empty small">Aucun inventaire.</div>';}
-async function openInventory(){if(!(await requireAdmin()))return;const ps=view.products.filter(p=>p.active!==false).sort(sortP);if(!ps.length)return toast('Aucun article.');
+async function openInventory(){if(!isAdmin())return toast('Code admin requis.');const ps=view.products.filter(p=>p.active!==false).sort(sortP);if(!ps.length)return toast('Aucun article.');
   const rowsH=ps.map(p=>{const st=Math.max(0,Number(view.stock[p.id])||0);if(p.mode==='ml'){const full=Math.floor(st/p.packageSize),rest=Math.round((st-full*p.packageSize)/10);
     return `<div class="invr" data-pid="${p.id}" data-mode="ml" data-size="${p.packageSize}"><div><b>${esc(p.name)}</b><div class="small mut">Théorique ${stockMain(p,st)} · contenant de ${fmtVol(p.packageSize)}</div></div><label><span>Pleins</span><input type="number" inputmode="numeric" min="0" step="1" data-full value="${full}"></label><label><span>Entamé (cl)</span><input type="number" inputmode="decimal" min="0" step="1" data-rest value="${rest}"></label></div>`;}
     return `<div class="invr" data-pid="${p.id}" data-mode="unit"><div><b>${esc(p.name)}</b><div class="small mut">Théorique ${st} unité(s)</div></div><label><span>Unités</span><input type="number" inputmode="numeric" min="0" step="1" data-units value="${st}"></label><div></div></div>`;}).join('');
@@ -669,7 +720,7 @@ function renderManage(){$('#wStart').value=weekStart;const w=weekStats(weekStart
   const ps=view.products.slice().sort((a,b)=>(a.active===false)-(b.active===false)||(a.category||'').localeCompare(b.category||'','fr')||sortP(a,b));
   $('#pList').innerHTML=ps.map(p=>`<div class="it click" data-edit="${p.id}" style="${p.active===false?'opacity:.5':''}"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="cdot" style="background:${p.color||'#9aa3b2'};width:16px;height:16px"></span><div style="min-width:0"><b>${esc(p.name)}</b> ${p.active===false?'<span class="pill">Archivé</span>':''}<div class="small mut">${esc(p.category||'Divers')} · ${p.formats.map(f=>esc(f.name)+' '+eurS(f.price)).join(' · ')}</div></div></div><span class="mut">Modifier</span></div>`).join('')||'<div class="empty small">Aucun article.</div>';
   $('#xNote').textContent='Onglets : Synthèse, Rapprochement stock, Consommations, Ventes, Règlements ardoise, Ardoises, Détail ventes, Réceptions, Inventaires, Clôtures, Stock actuel, Journal.'+(isLocal()?'':' L’appli charge les 120 derniers jours ; l’historique complet reste dans le Google Sheet.');
-  $('#xLock').style.display=(!isLocal()&&db.pinSet)?'':'none';
+  $('#xLock').style.display=isLocal()?'none':'';
   $('#aList').innerHTML=view.audit.slice(0,40).map(a=>`<div class="it"><div style="min-width:0"><b>${esc(a.type)}</b><div class="small mut">${tLabel(a.at)}${a.device?' · '+esc(a.device):''} · ${esc(a.description)}</div></div></div>`).join('')||'<div class="empty small">Journal vide.</div>';}
 function fmtRow(f,mode){return `<div class="frow" data-fid="${esc(f.id)}"><input data-fn value="${esc(f.name)}" placeholder="Ex. 4 cl"><input data-fq type="number" inputmode="numeric" min="1" value="${f.qty}"><input data-fp type="number" inputmode="decimal" step="0.01" min="0" value="${f.price}"><button type="button" class="x" data-fdel>×</button></div>`;}
 function editProduct(id){const src=id?prod(view,id):null;const p=src?clone(src):{id:uid(),name:'',category:'',mode:'ml',packageSize:700,low:0,color:COLORS[view.products.length%COLORS.length],order:view.products.length,active:true,formats:[{id:uid(),name:'4 cl',qty:40,price:3}]};
@@ -757,12 +808,12 @@ function connSheet(){const s=sheet(`<h3>Connexion et poste</h3><p class="mut sma
   <div class="cols2"><button class="btn ghost" id="kTest">Tester l’adresse</button><button class="btn ghost" id="kSync"${isLocal()?' disabled':''}>Synchroniser</button></div>
   <div class="acts"><button class="btn ghost" data-x>Fermer</button><button class="btn pri" id="kSave">Enregistrer</button></div>`);
   const E=x=>$(x,s.el);
-  E('#kTest').onclick=async()=>{const u=E('#kApi').value.trim();if(!u)return toast('Adresse vide.');try{const r=await apiGet(u);if(!r.ok)throw new Error(r.error||'Réponse invalide');toast(`Connexion réussie · ${r.state.products.length} article(s) dans le Sheet`);}catch(e){toast('Échec : '+e.message,null,6000);}};
+  E('#kTest').onclick=async()=>{const u=E('#kApi').value.trim();if(!u)return toast('Adresse vide.');try{const r=await apiGet(u);if(!r.ok)throw new Error(r.error||'Réponse invalide');if(r.locked)return toast('Connexion réussie · codes d’accès activés sur ce script');toast(`Connexion réussie · ${r.state.products.length} article(s) dans le Sheet`);}catch(e){toast('Échec : '+e.message,null,6000);}};
   E('#kSync').onclick=()=>{s.close();flush();};
   E('#kSave').onclick=async()=>{const u=E('#kApi').value.trim();cfg.device=E('#kDev').value.trim();
     if(u!==apiUrl()){if(queue.length&&!(await ask({title:'Opérations non envoyées',text:`${queue.length} opération(s) n’ont pas encore été envoyées et seront perdues si vous changez d’adresse.`,ok:'Changer quand même',danger:true})))return;
-      cfg.api=u;store(K.cfg,cfg);queue=[];store(K.q,queue);syncErr='';lastSync=null;store(K.last,null);try{sessionStorage.removeItem(K.pin);}catch(e){}
-      db=normalize(load(dbKey(),null)||(isLocal()?demoDb():emptyDb()));view=isLocal()?db:derive();cart=[];s.close();refresh(true);if(!isLocal())flush();toast(isLocal()?'Mode local activé':'Adresse enregistrée · synchronisation');}
+      cfg.api=u;store(K.cfg,cfg);queue=[];store(K.q,queue);syncErr='';lastSync=null;store(K.last,null);try{sessionStorage.removeItem(K.pin);sessionStorage.removeItem(K.role);}catch(e){}
+      db=normalize(load(dbKey(),null)||(isLocal()?demoDb():emptyDb()));view=isLocal()?db:derive();cart=[];s.close();boot();toast(isLocal()?'Mode local activé':'Adresse enregistrée · synchronisation');}
     else{store(K.cfg,cfg);s.close();setSync();toast('Enregistré');}};}
 
 /* ---------- Événements ---------- */
@@ -782,7 +833,9 @@ $('#wStart').onchange=e=>{if(e.target.value){weekStart=monday(new Date(e.target.
 $('#wPrev').onclick=()=>{const d=new Date(weekStart+'T12:00:00');d.setDate(d.getDate()-7);weekStart=dayKey(d);renderManage();};
 $('#wNext').onclick=()=>{const d=new Date(weekStart+'T12:00:00');d.setDate(d.getDate()+7);weekStart=dayKey(d);renderManage();};
 $('#wPrint').onclick=printWeek;$('#wShare').onclick=shareWeek;$('#xXlsx').onclick=()=>exportXlsx();$('#cXlsx').onclick=()=>exportXlsx([dayKey(),dayKey(),'jour_'+dayKey()]);$('#xPer').onchange=e=>{$('#xCustom').style.display=e.target.value==='custom'?'':'none';if(!$('#xFrom').value){$('#xFrom').value=weekStart;$('#xTo').value=dayKey();}};
-$('#xLock').onclick=()=>{try{sessionStorage.removeItem(K.pin);}catch(e){}go('pos');toast('Gestion verrouillée');};
+$('#xLock').onclick=()=>lockApp();$('#lockBtn').onclick=()=>lockApp();$('#lockConn').onclick=connSheet;
+$('#lockKeys').addEventListener('click',e=>{const b=e.target.closest('[data-k]');if(b)lockKey(b.dataset.k);});
+document.addEventListener('keydown',e=>{if(!$('#lock').classList.contains('on')||$('.ov'))return;if(/^[0-9A-Za-z]$/.test(e.key))lockKey(e.key);else if(e.key==='Backspace')lockKey('del');else if(e.key==='Enter')lockKey('ok');});
 $('#pNew').onclick=()=>editProduct();$('#pList').addEventListener('click',e=>{const r=e.target.closest('[data-edit]');if(r)editProduct(r.dataset.edit);});
 $('#sync').onclick=connSheet;
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')flush();});
@@ -790,7 +843,7 @@ window.addEventListener('online',()=>flush());
 setInterval(()=>{if(document.visibilityState==='visible')flush();},20000);
 
 /* ---------- Démarrage ---------- */
-renderTabs();go('pos');if(!isLocal())flush();
+boot();
 </script>
 </body>
 </html>

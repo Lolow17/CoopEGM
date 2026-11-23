@@ -14,7 +14,16 @@
  * Après chaque modification de ce script : Déployer > Gérer les déploiements >
  * crayon > Version : Nouvelle version > Déployer (l'URL reste la même).
  *
- * Le code gestionnaire se change dans l'onglet Config (ligne PIN).
+ * CODES D'ACCÈS (onglet Config)
+ *   PIN         = code ADMIN : accès à tout (Gestion, Réception, Stock,
+ *                 inventaire, articles, annulations anciennes).
+ *   PIN_CAISSE  = code CAISSE : Caisse, Ardoises, Clôture ; annulation d'un
+ *                 ticket ou d'un règlement seulement dans les 5 minutes.
+ *   Les deux codes doivent être différents. Tapez-les avec une apostrophe
+ *   devant ('0123) pour garder les zéros du début.
+ *   PIN vide        → aucun code, tout est ouvert.
+ *   PIN_CAISSE vide → la caisse est ouverte sans code, seul l'admin en demande un.
+ *   Après un changement de code, les appareils redemandent le code.
  *
  * ARDOISES
  * Une vente payée « Ardoise » est notée au nom d'une personne (colonne client
@@ -44,7 +53,11 @@ const HEAD = {
 /* ---------------- Points d'entrée ---------------- */
 
 function doGet(e) {
-  try { return json({ ok: true, state: state() }); }
+  try {
+    // Sans code configuré : comportement historique. Avec des codes : rien n'est lu sans code (POST action « state »).
+    if (!roleOf('', config())) return json({ ok: true, locked: true });
+    return json({ ok: true, state: state() });
+  }
   catch (err) { return json({ ok: false, error: String(err.message || err) }); }
 }
 
@@ -53,16 +66,19 @@ function doPost(e) {
   try { body = JSON.parse(e.postData.contents); }
   catch (err) { return json({ ok: false, error: 'Requête illisible' }); }
   try {
-    if (body.action === 'pin') {
-      const pin = String(config().PIN || '').trim();
-      return json({ ok: !pin || String(body.pin || '').trim() === pin });
-    }
+    const conf = config(), role = roleOf(body.pin, conf);
+    if (body.action === 'pin') return json({ ok: !!role, role: role });
+    if (!role) return json({ ok: false, auth: true, error: 'Code requis' });
+    if (body.action === 'state') return json({ ok: true, role: role, state: state() });
     const lock = LockService.getScriptLock();
     lock.waitLock(25000);
     try {
-      if (body.action === 'upload') return json(upload(body));
+      if (body.action === 'upload') {
+        if (role !== 'admin') return json({ ok: false, error: 'Code admin requis' });
+        return json(upload(body));
+      }
       if (body.action === 'ops') {
-        const results = applyOps(body.ops || [], body.device);
+        const results = applyOps(body.ops || [], body.device, conf);
         SpreadsheetApp.flush();
         return json({ ok: true, results: results, state: state() });
       }
@@ -117,6 +133,15 @@ function dayStr(v, d) { if (v instanceof Date) return ymd(v); if (v) return Stri
 function eur(n) { return money(n).toFixed(2).replace('.', ',') + ' €'; }
 function cleanName(v) { return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').slice(0, 60); }
 function tabKey(v) { return cleanName(v).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); } // « Élodie » = « elodie »
+/* Rôle donné par un code : 'admin', 'caisse' ou '' (refusé) */
+function roleOf(code, conf) {
+  const a = String(conf.PIN || '').trim(), k = String(conf.PIN_CAISSE || '').trim(), p = String(code || '').trim();
+  if (!a) return 'admin';
+  if (p && p === a) return 'admin';
+  if (!k) return 'caisse';
+  if (p && p === k) return 'caisse';
+  return '';
+}
 function config() { const o = {}; rows('Config').forEach(function (r) { o[String(r.cle)] = r.valeur; }); return o; }
 function setConfig(k, v) {
   const s = sh('Config'), last = s.getLastRow();
@@ -158,8 +183,7 @@ function saveProducts(P) {
 
 /* ---------------- Opérations ---------------- */
 
-function applyOps(ops, device) {
-  const pin = String(config().PIN || '').trim();
+function applyOps(ops, device, conf) {
   const os = sh('Ops'), n = os.getLastRow();
   const done = new Set(n > 1 ? os.getRange(2, 1, n - 1, 1).getValues().map(function (r) { return String(r[0]); }) : []);
   const ctx = {
@@ -174,7 +198,7 @@ function applyOps(ops, device) {
     try {
       const h = HANDLERS[op.type];
       if (!h) throw new Error('Type inconnu : ' + op.type);
-      ctx.admin = !pin || String(op.pin || '').trim() === pin;
+      ctx.admin = roleOf(op.pin, conf) === 'admin';
       h(op.data || {}, ctx);
       ctx.out.Ops.push([id, ctx.now, String(op.type)]);
       done.add(id);
@@ -220,7 +244,7 @@ function checkVoid(d, ctx, row, label) {
   if (!row) throw new Error(label + ' introuvable');
   if (String(row.statut) === 'annulee') return '';
   const recent = (ctx.now.getTime() - toDate(row.date).getTime()) < 5 * 60000;
-  if (!ctx.admin && !(d.quick && recent)) throw new Error('Code gestionnaire requis pour annuler ce ' + label.toLowerCase());
+  if (!ctx.admin && !(d.quick && recent)) throw new Error('Code admin requis pour annuler ce ' + label.toLowerCase());
   return reason;
 }
 
@@ -273,6 +297,7 @@ const HANDLERS = {
   },
 
   reception: function (d, ctx) {
+    if (!ctx.admin) throw new Error('Code admin requis pour la réception');
     const supplier = String(d.supplier || '').trim();
     if (!supplier) throw new Error('Fournisseur manquant');
     const lines = (d.lines || []).map(function (l) {
@@ -289,7 +314,7 @@ const HANDLERS = {
   },
 
   inventory: function (d, ctx) {
-    if (!ctx.admin) throw new Error("Code gestionnaire requis pour l'inventaire");
+    if (!ctx.admin) throw new Error("Code admin requis pour l'inventaire");
     const reason = String(d.reason || '').trim() || 'Inventaire';
     const at = toDate(d.at);
     const lines = (d.lines || []).map(function (l) {
@@ -320,7 +345,7 @@ const HANDLERS = {
   },
 
   product: function (d, ctx) {
-    if (!ctx.admin) throw new Error('Code gestionnaire requis');
+    if (!ctx.admin) throw new Error('Code admin requis');
     const name = String(d.name || '').trim();
     if (!name) throw new Error('Nom manquant');
     const mode = d.mode === 'unit' ? 'unit' : 'ml';
@@ -395,6 +420,7 @@ function state() {
       return { at: iso(r.date), type: String(r.type), description: String(r.detail), reference: String(r.ref || ''), device: String(r.poste || '') };
     }),
     pinSet: !!String(config().PIN || '').trim(),
+    cashierPinSet: !!String(config().PIN_CAISSE || '').trim(),
     serverTime: new Date().toISOString()
   };
 }
@@ -438,10 +464,11 @@ function setup() {
   Object.keys(HEAD).forEach(sh);
   const c = sh('Config');
   if (c.getLastRow() < 2) c.getRange(2, 1, 3, 3).setValues([
-    ['PIN', "'0000", 'Code gestionnaire (Gestion, inventaire, annulations). Vide = pas de code.'],
+    ['PIN', "'0000", 'Code ADMIN : accès à tout. Vide = aucun code.'],
     ['NOM', "Coop'EGM", 'Nom de la caisse'],
     ['DOSSIER_ID', '', 'Rempli automatiquement : dossier Drive des justificatifs']
   ]);
+  if (!('PIN_CAISSE' in config())) c.appendRow(['PIN_CAISSE', '', 'Code CAISSE : Caisse, Ardoises, Clôture. Vide = caisse sans code. Différent du PIN admin.']);
   if (sh('Produits').getLastRow() < 2) {
     const P = { list: exemples().map(function (p) { return { p: p, stock: 0 }; }), by: {}, dirty: true };
     saveProducts(P);
