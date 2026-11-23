@@ -31,7 +31,7 @@ button{cursor:pointer;border:0;background:none;padding:0;touch-action:manipulati
 .brand span{color:var(--acc)}
 .brand small{display:block;font-family:Barlow;font-weight:500;font-size:11px;color:var(--mut);letter-spacing:0;margin-top:2px}
 .tabs{display:flex;gap:4px;margin-left:14px}
-.tabs button{padding:10px 16px;border-radius:11px;color:var(--mut);font-weight:600;font-size:15px}
+.tabs button{padding:10px 14px;border-radius:11px;color:var(--mut);font-weight:600;font-size:15px}
 .tabs button.on{background:var(--p2);color:var(--ink)}
 .tabs svg{display:none}
 .sync{margin-left:auto;display:flex;align-items:center;gap:8px;padding:8px 13px;border-radius:999px;background:var(--p1);border:1px solid var(--line);font-size:13px;color:var(--mut);white-space:nowrap}
@@ -193,7 +193,7 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),li
 @media (max-width:860px){
   .tabs{display:none}
   .brand small{display:none}
-  .tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;bottom:0;left:0;right:0;background:#0a0c0f;border-top:1px solid var(--line);padding-bottom:var(--sb);z-index:30}
+  .tabbar{display:grid;grid-template-columns:repeat(6,1fr);position:fixed;bottom:0;left:0;right:0;background:#0a0c0f;border-top:1px solid var(--line);padding-bottom:var(--sb);z-index:30}
   .tabbar button{padding:8px 2px 9px;font-size:11.5px;color:var(--mut);font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px}
   .tabbar svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   .tabbar button.on{color:var(--acc)}
@@ -260,11 +260,23 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),li
           <button class="pay cash" data-pay="Espèces">Espèces</button>
           <button class="pay card" data-pay="Carte">Carte</button>
           <button class="pay tr" data-pay="Virement">Virement</button>
-          <button class="pay oth" data-pay="Autre">Autre</button>
+          <button class="pay oth" data-pay="Ardoise">Ardoise</button>
         </div>
       </div>
     </aside>
   </section>
+
+  <!-- ARDOISES -->
+  <section class="view" id="v-ardo"><div class="page">
+    <h1>Ardoises</h1>
+    <p class="sub">Consommations notées au nom d’une personne. Touchez un nom pour voir le détail et encaisser son règlement.</p>
+    <div class="kpis" id="tbKpis"></div>
+    <div class="card">
+      <label class="fld"><span>Rechercher</span><input id="tbSearch" placeholder="Nom ou prénom" autocomplete="off"></label>
+      <div class="list" id="tbList"></div>
+      <button class="btn ghost full" id="tbAll"></button>
+    </div>
+  </div></section>
 
   <!-- RECEPTION -->
   <section class="view" id="v-recv"><div class="page">
@@ -387,7 +399,8 @@ const hm=s=>{const d=new Date(s);return isNaN(d)?'':d.toLocaleTimeString('fr-FR'
 const fmtDay=k=>new Date(k+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'2-digit'});
 const monday=(d=new Date())=>{const x=new Date(d);x.setHours(12,0,0,0);x.setDate(x.getDate()-(x.getDay()+6)%7);return dayKey(x);};
 const clone=o=>JSON.parse(JSON.stringify(o));
-const METHODS=['Espèces','Carte','Virement','Autre'];
+const METHODS=['Espèces','Carte','Virement','Ardoise'];
+const PAYS=['Espèces','Carte','Virement'],PAYCLS={'Espèces':'cash','Carte':'card','Virement':'tr'};
 const COLORS=['#f2b544','#e8743b','#e0484f','#c94f9b','#7a5cff','#3d7bf2','#2bb3c0','#39c98a','#8fbf3a','#9aa3b2'];
 const K={cfg:'coopegm3_cfg',q:'coopegm3_queue',last:'coopegm3_last',pin:'coopegm3_pin'};
 function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
@@ -397,7 +410,15 @@ function fmtVol(ml){return ml>=1000?(ml/1000).toLocaleString('fr-FR',{maximumFra
 function stockMain(p,st){return p.mode==='ml'?(st/1000).toLocaleString('fr-FR',{maximumFractionDigits:2})+' L':`${st}`;}
 function stockSub(p,st){return p.mode==='ml'?`≈ ${(st/p.packageSize).toLocaleString('fr-FR',{maximumFractionDigits:1})} contenant(s) de ${fmtVol(p.packageSize)}`:'unité(s)';}
 function saleDay(s){return s.day||dayKey(new Date(s.at));}
-function paySums(list){const o={'Espèces':0,'Carte':0,'Virement':0,'Autre':0};list.forEach(s=>o[s.method]=money((o[s.method]||0)+s.total));return o;}
+/* Encaissements par moyen : ventes + règlements d'ardoise. o.Ardoise = consommations mises à crédit (pas encore encaissées). */
+function paySums(list,regs){const o={'Espèces':0,'Carte':0,'Virement':0,'Autre':0,'Ardoise':0};list.forEach(s=>o[s.method]=money((o[s.method]||0)+s.total));(regs||[]).forEach(r=>o[r.method]=money((o[r.method]||0)+r.amount));return o;}
+function payKeys(o){return METHODS.concat(o&&o['Autre']?['Autre']:[]);}
+const payLabel=m=>m==='Ardoise'?'Mis sur ardoise':m;
+const sumOf=(l,k)=>money(l.reduce((a,x)=>a+(Number(x[k])||0),0));
+/* Ardoises : la clé ignore majuscules, accents et espaces en trop (« Élodie » = « elodie ») */
+const cleanName=v=>String(v??'').trim().replace(/\s+/g,' ').slice(0,60);
+const tabKey=v=>cleanName(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function tabAdd(s,name,delta,at){const k=tabKey(name);if(!k)return;const t=s.tabs[k]||(s.tabs[k]={key:k,name:cleanName(name),balance:0,last:''});t.balance=money(t.balance+delta);if(at&&at>t.last)t.last=at;}
 
 /* ---------- Configuration locale ---------- */
 let cfg=load(K.cfg,{});
@@ -406,7 +427,7 @@ const isLocal=()=>!apiUrl();
 const dbKey=()=>isLocal()?'coopegm3_db_local':'coopegm3_db_srv';
 
 /* ---------- Données ---------- */
-function emptyDb(){return {products:[],stock:{},sales:[],receptions:[],inventories:[],closings:[],audit:[],pinSet:false};}
+function emptyDb(){return {products:[],stock:{},sales:[],settlements:[],tabs:{},receptions:[],inventories:[],closings:[],audit:[],pinSet:false};}
 function demoDb(){const F=(name,qty,price)=>({id:uid(),name,qty,price});const list=[
   ['Bière 33 cl','Bières','unit',1,24,'#f2b544',[F('Bouteille',1,2.5)],48],
   ['Pression (fût 30 L)','Bières','ml',30000,5000,'#e8743b',[F('Demi 25 cl',250,3),F('Pinte 50 cl',500,5)],30000],
@@ -431,11 +452,13 @@ function stockAdd(s,pid,delta){s.stock[pid]=Math.round(((Number(s.stock[pid])||0
 
 /* Même logique que le serveur, appliquée localement pour un affichage immédiat */
 function applyOp(s,op){const d=op.data||{};
-  if(op.type==='sale'){if(s.sales.some(x=>x.id===d.id))return;const total=money(d.items.reduce((a,i)=>a+i.qty*i.unitPrice,0));s.sales.push({id:d.id,at:d.at,day:d.day,method:d.method,status:'valide',total,items:d.items,device:d.device||''});d.items.forEach(i=>stockAdd(s,i.pid,-i.consumed));addLog(s,'Vente',`${eur(total)} · ${d.method}`,d.id);}
-  else if(op.type==='void'){const x=s.sales.find(v=>v.id===d.id);if(!x||x.status==='annulee')return;x.status='annulee';x.voidAt=op.at;x.voidReason=d.reason;x.items.forEach(i=>stockAdd(s,i.pid,i.consumed));addLog(s,'Annulation',`${eur(x.total)} · ${d.reason}`,d.id);}
+  if(op.type==='sale'){if(s.sales.some(x=>x.id===d.id))return;const total=money(d.items.reduce((a,i)=>a+i.qty*i.unitPrice,0)),client=cleanName(d.client);s.sales.push({id:d.id,at:d.at,day:d.day,method:d.method,status:'valide',total,items:d.items,device:d.device||'',client});d.items.forEach(i=>stockAdd(s,i.pid,-i.consumed));if(d.method==='Ardoise')tabAdd(s,client,total,d.at);addLog(s,'Vente',`${eur(total)} · ${d.method}${client?' · '+client:''}`,d.id);}
+  else if(op.type==='void'){const x=s.sales.find(v=>v.id===d.id);if(!x||x.status==='annulee')return;x.status='annulee';x.voidAt=op.at;x.voidReason=d.reason;x.items.forEach(i=>stockAdd(s,i.pid,i.consumed));if(x.method==='Ardoise')tabAdd(s,x.client,-x.total);addLog(s,'Annulation',`${eur(x.total)} · ${d.reason}`,d.id);}
+  else if(op.type==='settle'){if(s.settlements.some(x=>x.id===d.id))return;const amount=money(d.amount),client=cleanName(d.client);s.settlements.push({id:d.id,at:d.at,day:d.day,client,method:d.method,amount,status:'valide',device:d.device||''});tabAdd(s,client,-amount,d.at);addLog(s,'Règlement ardoise',`${client} · ${eur(amount)} · ${d.method}`,d.id);}
+  else if(op.type==='settlevoid'){const x=s.settlements.find(v=>v.id===d.id);if(!x||x.status==='annulee')return;x.status='annulee';x.voidAt=op.at;x.voidReason=d.reason;tabAdd(s,x.client,x.amount);addLog(s,'Annulation règlement',`${x.client} · ${eur(x.amount)} · ${d.reason}`,d.id);}
   else if(op.type==='reception'){if(s.receptions.some(x=>x.id===d.id))return;const lines=d.lines.map(l=>{const p=prod(s,l.pid);return {pid:l.pid,article:p?p.name:'',packages:l.packages,added:l.packages*(p&&p.mode==='ml'?p.packageSize:1)};});s.receptions.push(Object.assign({},d,{lines}));lines.forEach(l=>stockAdd(s,l.pid,l.added));addLog(s,'Réception',`${d.supplier} · ${eur(d.amount)} · ${lines.length} réf.`,d.id);}
   else if(op.type==='inventory'){if(s.inventories.some(x=>x.id===d.id))return;const lines=d.lines.map(l=>{const th=Number(s.stock[l.pid])||0;const p=prod(s,l.pid);return {pid:l.pid,article:p?p.name:'',theoretical:th,physical:l.physical,diff:Math.round((l.physical-th)*1000)/1000};});lines.forEach(l=>s.stock[l.pid]=l.physical);s.inventories.push({id:d.id,at:d.at,reason:d.reason,lines});addLog(s,'Inventaire',`${d.reason} · ${lines.filter(l=>l.diff).length} écart(s)`,d.id);}
-  else if(op.type==='closing'){if(s.closings.some(x=>x.id===d.id))return;const pay=paySums(s.sales.filter(x=>saleDay(x)===d.day&&x.status==='valide'));const total=money(METHODS.reduce((a,m)=>a+pay[m],0));const expected=money(d.float+pay['Espèces']);s.closings.push({id:d.id,at:d.at,day:d.day,float:d.float,count:d.count,expected,difference:money(d.count-expected),payments:pay,total,note:d.note});addLog(s,'Clôture',`${d.day} · écart ${eur(d.count-expected)}`,d.id);}
+  else if(op.type==='closing'){if(s.closings.some(x=>x.id===d.id))return;const sl=s.sales.filter(x=>saleDay(x)===d.day&&x.status==='valide'),rg=s.settlements.filter(x=>saleDay(x)===d.day&&x.status==='valide');const pay=paySums(sl,rg);const total=sumOf(sl,'total');const expected=money(d.float+pay['Espèces']);s.closings.push({id:d.id,at:d.at,day:d.day,float:d.float,count:d.count,expected,difference:money(d.count-expected),payments:pay,settled:sumOf(rg,'amount'),total,note:d.note});addLog(s,'Clôture',`${d.day} · écart ${eur(d.count-expected)}`,d.id);}
   else if(op.type==='product'){const i=s.products.findIndex(p=>p.id===d.id);if(i>=0)s.products[i]=clone(d);else s.products.push(clone(d));if(s.stock[d.id]==null)s.stock[d.id]=0;addLog(s,i>=0?'Article modifié':'Article créé',d.name,d.id);}
 }
 function derive(){const v=clone(db);queue.forEach(op=>applyOp(v,op));return v;}
@@ -487,10 +510,10 @@ let pendingRefresh=false;
 function typing(){const a=document.activeElement;return !!a&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)&&!a.closest('.ov');}
 function refresh(force){if(!force&&(typing()||$('.ov'))){pendingRefresh=true;setSync();renderPos();return;}pendingRefresh=false;renderAll();}
 document.addEventListener('focusout',()=>setTimeout(()=>{if(pendingRefresh&&!typing()&&!$('.ov'))refresh();},60));
-function renderAll(){renderPos();if(cur==='recv')renderRecv();if(cur==='stock')renderStock();if(cur==='close')renderClose();if(cur==='manage')renderManage();setSync();}
+function renderAll(){renderPos();if(cur==='ardo')renderArdo();if(cur==='recv')renderRecv();if(cur==='stock')renderStock();if(cur==='close')renderClose();if(cur==='manage')renderManage();setSync();}
 
-const ICONS={pos:'<rect x="3" y="9" width="18" height="11" rx="2"/><path d="M7 9V5h10v4M7 14h2M11 14h2M15 14h2M7 17h10"/>',recv:'<path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',stock:'<path d="M5 20V11M12 20V4M19 20v-6"/>',close:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',manage:'<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'};
-const TABS=[['pos','Caisse'],['recv','Réception'],['stock','Stock'],['close','Clôture'],['manage','Gestion']];
+const ICONS={ardo:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',pos:'<rect x="3" y="9" width="18" height="11" rx="2"/><path d="M7 9V5h10v4M7 14h2M11 14h2M15 14h2M7 17h10"/>',recv:'<path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',stock:'<path d="M5 20V11M12 20V4M19 20v-6"/>',close:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',manage:'<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'};
+const TABS=[['pos','Caisse'],['ardo','Ardoises'],['recv','Réception'],['stock','Stock'],['close','Clôture'],['manage','Gestion']];
 function renderTabs(){const h=TABS.map(([k,l])=>`<button data-tab="${k}"><svg viewBox="0 0 24 24">${ICONS[k]}</svg><span>${l}</span></button>`).join('');$('#tabs').innerHTML=h;$('#tabbar').innerHTML=h;}
 async function go(tab){if(tab==='manage'&&!(await requireAdmin()))return;cur=tab;$$('[data-tab]').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));$$('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+tab));closeTicket();refresh(true);const v=$('#v-'+tab);if(v&&tab!=='pos')v.scrollTop=0;}
 
@@ -519,19 +542,55 @@ async function addToCart(pid,fid){const p=prod(view,pid),f=p&&p.formats.find(x=>
   const need=cart.filter(c=>c.pid===pid).reduce((a,c)=>{const ff=fmtOf(c);return a+(ff?c.qty*ff.qty:0);},0)+f.qty;const st=Number(view.stock[pid])||0;
   if(need>st&&!overStock[pid]){const ok=await ask({title:'Stock théorique insuffisant',text:`${p.name} : il reste ${p.mode==='ml'?stockMain(p,Math.max(0,st)):Math.max(0,st)+' unité(s)'} selon le stock. Vendre quand même ? Pensez à faire une réception ou un inventaire.`,ok:'Vendre quand même'});if(!ok)return;overStock[pid]=true;}
   const it=cart.find(c=>c.pid===pid&&c.fid===fid);if(it)it.qty++;else cart.push({pid,fid,qty:1});renderPos();}
-function sell(method,extra=''){if(!cart.length)return;const items=cart.map(c=>{const p=prod(view,c.pid),f=fmtOf(c);return {pid:p.id,fid:f.id,article:p.name,format:f.name,qty:c.qty,consumed:c.qty*f.qty,unitPrice:money(f.price)};});
-  const id=uid(),total=cartTotal();commit('sale',{id,at:new Date().toISOString(),day:dayKey(),method,items,device:cfg.device||''});cart=[];overStock={};closeTicket();renderPos();
-  toast(`${eur(total)} encaissé · ${method}${extra}`,{label:'Annuler',fn:()=>{commit('void',{id,reason:'Annulation immédiate',quick:true});toast('Vente annulée · stock réintégré');}},7000);}
+function sell(method,extra='',client=''){if(!cart.length)return;const items=cart.map(c=>{const p=prod(view,c.pid),f=fmtOf(c);return {pid:p.id,fid:f.id,article:p.name,format:f.name,qty:c.qty,consumed:c.qty*f.qty,unitPrice:money(f.price)};});
+  const id=uid(),total=cartTotal();commit('sale',{id,at:new Date().toISOString(),day:dayKey(),method,items,device:cfg.device||'',client});cart=[];overStock={};closeTicket();renderPos();
+  toast(method==='Ardoise'?`${eur(total)} sur l’ardoise de ${client}`:`${eur(total)} encaissé · ${method}${extra}`,{label:'Annuler',fn:()=>{commit('void',{id,reason:'Annulation immédiate',quick:true});toast('Vente annulée · stock réintégré');}},7000);}
 function cashSheet(){if(!cart.length)return;const total=cartTotal(),opts=[];const add=v=>{v=money(v);if(v>total+0.001&&opts.indexOf(v)<0)opts.push(v);};add(Math.ceil(total));add(Math.ceil(total/5)*5);add(Math.ceil(total/10)*10);[20,50,100].forEach(add);opts.sort((a,b)=>a-b);
   const s=sheet(`<h3>Paiement en espèces</h3><div class="cashTot"><span>À encaisser</span><b class="num">${eur(total)}</b></div><div class="qgrid"><button class="qb on" data-g="${total}">Compte juste</button>${opts.slice(0,5).map(v=>`<button class="qb" data-g="${v}">${eurS(v)}</button>`).join('')}</div><label class="fld"><span>Montant reçu (€)</span><input id="cashIn" type="number" inputmode="decimal" step="0.01" value="${total}"></label><div class="change"><span>À rendre</span><b class="num good" id="chg">0,00 €</b></div><div class="acts"><button class="btn ghost" data-x>Retour</button><button class="btn pri" id="cashOk">Valider</button></div>`);
   const inp=$('#cashIn',s.el),chg=$('#chg',s.el);const upd=()=>{const c=money(num(inp.value)-total);chg.textContent=c<0?'Manque '+eur(-c):eur(c);chg.className='num '+(c<0?'bad':'good');};
   s.el.addEventListener('click',e=>{const b=e.target.closest('[data-g]');if(b){$$('.qb',s.el).forEach(x=>x.classList.toggle('on',x===b));inp.value=b.dataset.g;upd();}});
   inp.oninput=()=>{$$('.qb',s.el).forEach(x=>x.classList.remove('on'));upd();};
   $('#cashOk',s.el).onclick=()=>{const c=money(num(inp.value)-total);if(c<0)return toast('Montant reçu insuffisant.');s.close();sell('Espèces',c>0?` · rendre ${eur(c)}`:'');};}
+/* ---------- Ardoises ---------- */
+const tabList=()=>Object.values(view.tabs||{});
+function ardoiseSheet(){if(!cart.length)return;const total=cartTotal();
+  const s=sheet(`<h3>Mettre sur l’ardoise</h3><div class="cashTot"><span>Montant</span><b class="num">${eur(total)}</b></div><label class="fld"><span>Nom ou prénom</span><input id="tabIn" placeholder="Rechercher ou saisir un nouveau nom" autocomplete="off" autocapitalize="words"></label><div class="list" id="tabPick"></div><div class="acts"><button class="btn ghost" data-x>Retour</button><button class="btn pri" id="tabOk">Valider</button></div>`);
+  const inp=$('#tabIn',s.el),box=$('#tabPick',s.el);
+  const draw=()=>{const q=tabKey(inp.value),l=tabList().filter(t=>!q||t.key.indexOf(q)>=0).sort((a,b)=>(b.balance>0.004)-(a.balance>0.004)||String(b.last).localeCompare(String(a.last))).slice(0,30);
+    box.innerHTML=l.map(t=>`<div class="it click" data-pick="${esc(t.key)}"><b>${esc(t.name)}</b><span class="num ${t.balance>0.004?'bad':'mut'}" style="font-size:20px">${eur(t.balance)}</span></div>`).join('')+(q&&!view.tabs[q]?`<div class="empty small">Nouvelle ardoise : « ${esc(cleanName(inp.value))} » · touchez Valider</div>`:'')+(!q&&!l.length?'<div class="empty small">Aucune ardoise pour l’instant. Saisissez un nom.</div>':'');};
+  const done=name=>{s.close();sell('Ardoise','',name);};
+  box.onclick=e=>{const r=e.target.closest('[data-pick]');if(r&&view.tabs[r.dataset.pick])done(view.tabs[r.dataset.pick].name);};
+  const ok=()=>{const v=cleanName(inp.value);if(!v){inp.focus();return toast('Saisissez un nom ou touchez une ardoise.');}const t=view.tabs[tabKey(v)];done(t?t.name:v);};
+  $('#tabOk',s.el).onclick=ok;inp.oninput=draw;inp.onkeydown=e=>{if(e.key==='Enter')ok();};draw();setTimeout(()=>inp.focus(),80);}
+let showSettled=false;
+function renderArdo(){const all=tabList(),open=all.filter(t=>Math.abs(t.balance)>0.004),q=tabKey($('#tbSearch').value);
+  $('#tbKpis').innerHTML=kpi('Total dû',eur(open.reduce((a,t)=>a+Math.max(0,t.balance),0)))+kpi('Ardoises ouvertes',open.filter(t=>t.balance>0).length);
+  const l=(showSettled||q?all:open).filter(t=>!q||t.key.indexOf(q)>=0).sort((a,b)=>b.balance-a.balance||a.name.localeCompare(b.name,'fr'));
+  $('#tbList').innerHTML=l.map(t=>`<div class="it click" data-ardo="${esc(t.key)}"><div style="min-width:0"><b>${esc(t.name)}</b><div class="small mut">${t.balance<-0.004?'Avance · ':''}${t.last?'Dernier mouvement '+tLabel(t.last):''}</div></div><b class="num ${t.balance>0.004?'bad':'good'}" style="font-size:22px">${eur(Math.abs(t.balance))}</b></div>`).join('')||`<div class="empty small">${q?'Aucun nom trouvé.':'Aucune ardoise en cours.'}</div>`;
+  $('#tbAll').textContent=showSettled?'Masquer les ardoises soldées':'Afficher aussi les ardoises soldées';}
+function ardoDetail(key){const t=view.tabs[key];if(!t)return;const bal=t.balance;
+  const ev=view.sales.filter(x=>x.method==='Ardoise'&&tabKey(x.client)===key).map(x=>({t:x.at,h:`<div class="it"><div style="min-width:0"><b class="num" style="font-size:20px">+ ${eur(x.total)}</b> ${x.status==='annulee'?'<span class="pill bad">Annulé</span>':''}<div class="small mut">${tLabel(x.at)} · ${esc(x.items.map(i=>i.qty+' × '+i.article+' '+i.format).join(', '))}</div></div></div>`}))
+    .concat(view.settlements.filter(r=>tabKey(r.client)===key).map(r=>({t:r.at,h:`<div class="it"><div style="min-width:0"><b class="num good" style="font-size:20px">− ${eur(r.amount)}</b> <span class="pill">Réglé · ${esc(r.method)}</span> ${r.status==='annulee'?'<span class="pill bad">Annulé</span>':''}<div class="small mut">${tLabel(r.at)}${r.device?' · '+esc(r.device):''}${r.voidReason?' · Motif : '+esc(r.voidReason):''}</div></div>${r.status==='valide'?`<button class="btn ghost sm" data-svoid="${r.id}">Annuler</button>`:''}</div>`})))
+    .sort((a,b)=>String(b.t).localeCompare(String(a.t))).map(x=>x.h).join('');
+  const s=sheet(`<h3>${esc(t.name)}</h3><div class="cashTot"><span>${bal<-0.004?'Avance':'Reste à payer'}</span><b class="num ${bal>0.004?'bad':'good'}">${eur(Math.abs(bal))}</b></div>
+    ${bal>0.004?`<label class="fld"><span>Montant réglé (€)</span><input id="stAmt" type="number" inputmode="decimal" step="0.01" min="0" value="${bal}"></label><p class="small mut">Choisissez le moyen de paiement utilisé : le montant entre dans la caisse du jour.</p><div class="pays" style="grid-template-columns:repeat(3,1fr)">${PAYS.map(m=>`<button class="pay ${PAYCLS[m]}" data-settle="${m}">${m}</button>`).join('')}</div>`:'<p class="mut">Ardoise soldée, rien à encaisser.</p>'}
+    <h2 style="font-size:17px;margin:20px 0 2px">Historique</h2><div class="list">${ev||'<div class="empty small">Aucun mouvement sur les 120 derniers jours.</div>'}</div>
+    <div class="acts"><button class="btn ghost" data-x>Fermer</button></div>`,{wide:true});
+  s.el.addEventListener('click',async e=>{const b=e.target.closest('[data-settle]');
+    if(b){const amt=money(num($('#stAmt',s.el).value));if(amt<=0)return toast('Montant invalide.');
+      if(amt>bal+0.004&&!(await ask({title:'Montant supérieur à l’ardoise',text:`${t.name} doit ${eur(bal)}. Enregistrer ${eur(amt)} ? Le surplus restera en avance sur son ardoise.`,ok:'Enregistrer'})))return;
+      s.close();settle(t.name,amt,b.dataset.settle);}
+    const v=e.target.closest('[data-svoid]');if(v){s.close();voidSettle(v.dataset.svoid);}});}
+function settle(name,amount,method){const id=uid();commit('settle',{id,at:new Date().toISOString(),day:dayKey(),client:name,method,amount,device:cfg.device||''});
+  toast(`${eur(amount)} réglé par ${name} · ${method}`,{label:'Annuler',fn:()=>{commit('settlevoid',{id,reason:'Annulation immédiate',quick:true});toast('Règlement annulé · montant remis sur l’ardoise');}},7000);}
+async function voidSettle(id){const x=view.settlements.find(r=>r.id===id);if(!x||x.status!=='valide')return;const quick=Date.now()-new Date(x.at).getTime()<4.5*60000;
+  if(!quick&&!(await requireAdmin()))return;
+  const reason=await askText({title:`Annuler le règlement de ${eur(x.amount)}`,text:'Le montant est remis sur l’ardoise. Aucun remboursement n’est fait automatiquement.',label:'Motif (obligatoire)',placeholder:'Erreur de saisie, mauvais moyen de paiement…',ok:'Annuler le règlement',danger:true});
+  if(!reason)return;commit('settlevoid',{id,reason,quick});toast('Règlement annulé · montant remis sur l’ardoise');}
 function openTicket(){$('#ticket').classList.add('open');$('#tBack').classList.add('open');}
 function closeTicket(){$('#ticket').classList.remove('open');$('#tBack').classList.remove('open');}
 function ticketsSheet(){const today=dayKey();const list=view.sales.filter(x=>saleDay(x)===today).slice().reverse();const ok=list.filter(x=>x.status==='valide');
-  const s=sheet(`<h3>Tickets du jour</h3><p class="mut">${ok.length} ticket(s) · ${eur(ok.reduce((a,x)=>a+x.total,0))}</p><div class="list">${list.slice(0,80).map(x=>`<div class="it"><div style="min-width:0"><b class="num" style="font-size:22px">${eur(x.total)}</b> <span class="pill">${esc(x.method)}</span> ${x.status==='annulee'?'<span class="pill bad">Annulé</span>':''}<div class="small mut">${hm(x.at)}${x.device?' · '+esc(x.device):''} · ${esc(x.items.map(i=>i.qty+' × '+i.article+' '+i.format).join(', '))}</div>${x.voidReason?`<div class="small mut">Motif : ${esc(x.voidReason)}</div>`:''}</div>${x.status==='valide'?`<button class="btn ghost sm" data-void="${x.id}">Annuler</button>`:''}</div>`).join('')||'<div class="empty small">Aucun ticket aujourd’hui.</div>'}</div><div class="acts"><button class="btn" data-x>Fermer</button></div>`);
+  const s=sheet(`<h3>Tickets du jour</h3><p class="mut">${ok.length} ticket(s) · ${eur(ok.reduce((a,x)=>a+x.total,0))}</p><div class="list">${list.slice(0,80).map(x=>`<div class="it"><div style="min-width:0"><b class="num" style="font-size:22px">${eur(x.total)}</b> <span class="pill">${esc(x.method)}${x.client?' · '+esc(x.client):''}</span> ${x.status==='annulee'?'<span class="pill bad">Annulé</span>':''}<div class="small mut">${hm(x.at)}${x.device?' · '+esc(x.device):''} · ${esc(x.items.map(i=>i.qty+' × '+i.article+' '+i.format).join(', '))}</div>${x.voidReason?`<div class="small mut">Motif : ${esc(x.voidReason)}</div>`:''}</div>${x.status==='valide'?`<button class="btn ghost sm" data-void="${x.id}">Annuler</button>`:''}</div>`).join('')||'<div class="empty small">Aucun ticket aujourd’hui.</div>'}</div><div class="acts"><button class="btn" data-x>Fermer</button></div>`);
   s.el.addEventListener('click',e=>{const b=e.target.closest('[data-void]');if(b){s.close();voidSale(b.dataset.void);}});}
 async function voidSale(id){const x=view.sales.find(v=>v.id===id);if(!x||x.status!=='valide')return;const quick=Date.now()-new Date(x.at).getTime()<4.5*60000;
   if(!quick&&!(await requireAdmin()))return;
@@ -581,15 +640,16 @@ async function openInventory(){if(!(await requireAdmin()))return;const ps=view.p
 /* ---------- Clôture ---------- */
 function kpi(l,v){return `<div class="kpi"><span>${esc(l)}</span><b>${v}</b></div>`;}
 function todaySales(){const d=dayKey();return view.sales.filter(s=>saleDay(s)===d&&s.status==='valide');}
-function renderClose(){const sales=todaySales(),pay=paySums(sales),tot=money(sales.reduce((a,s)=>a+s.total,0));
+function todayRegs(){const d=dayKey();return view.settlements.filter(s=>saleDay(s)===d&&s.status==='valide');}
+function renderClose(){const sales=todaySales(),regs=todayRegs(),pay=paySums(sales,regs),tot=money(sales.reduce((a,s)=>a+s.total,0));
   $('#cDay').textContent=new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  $('#cKpis').innerHTML=kpi('Total du jour',eur(tot))+kpi('Tickets',sales.length)+METHODS.map(m=>kpi(m,eur(pay[m]))).join('');
+  $('#cKpis').innerHTML=kpi('Total du jour',eur(tot))+kpi('Tickets',sales.length)+payKeys(pay).map(m=>kpi(payLabel(m),eur(pay[m]))).join('')+kpi('dont règlements d’ardoise',eur(sumOf(regs,'amount')));
   const done=view.closings.filter(c=>c.day===dayKey());const cd=$('#cDone');cd.style.display=done.length?'block':'none';cd.textContent=done.length?`Déjà ${done.length} clôture(s) enregistrée(s) aujourd’hui (dernière à ${hm(done[done.length-1].at)}).`:'';
   calcClose();
   $('#cHist').innerHTML=view.closings.slice().reverse().slice(0,10).map(c=>`<div class="it"><div><b>${fmtDay(c.day)}</b> · ${eur(c.total)}<div class="small mut">Attendu ${eur(c.expected)} · compté ${eur(c.count)}${c.note?' · '+esc(c.note):''}</div></div><b class="num ${Math.abs(c.difference)<0.01?'good':'bad'}" style="font-size:22px">${c.difference>0?'+':''}${eur(c.difference)}</b></div>`).join('')||'<div class="empty small">Aucune clôture.</div>';}
-function calcClose(){const cash=paySums(todaySales())['Espèces'];const exp=money(num($('#cFloat').value)+cash),d=money(num($('#cCount').value)-exp);$('#cExp').textContent=eur(exp);const el=$('#cDiff');el.textContent=(d>0?'+':'')+eur(d);el.className='num '+(Math.abs(d)<0.01?'good':'bad');}
+function calcClose(){const cash=paySums(todaySales(),todayRegs())['Espèces'];const exp=money(num($('#cFloat').value)+cash),d=money(num($('#cCount').value)-exp);$('#cExp').textContent=eur(exp);const el=$('#cDiff');el.textContent=(d>0?'+':'')+eur(d);el.className='num '+(Math.abs(d)<0.01?'good':'bad');}
 async function saveClose(){const fl=money(num($('#cFloat').value)),ct=money(num($('#cCount').value));if(fl<0||ct<0)return toast('Montants invalides.');
-  const exp=money(fl+paySums(todaySales())['Espèces']),d=money(ct-exp);
+  const exp=money(fl+paySums(todaySales(),todayRegs())['Espèces']),d=money(ct-exp);
   if(!(await ask({title:'Enregistrer la clôture ?',text:`Espèces attendues ${eur(exp)}, comptées ${eur(ct)}, écart ${d>0?'+':''}${eur(d)}.`,ok:'Enregistrer'})))return;
   commit('closing',{id:uid(),at:new Date().toISOString(),day:dayKey(),float:fl,count:ct,note:$('#cNote').value.trim()});$('#cNote').value='';toast('Clôture enregistrée');}
 
@@ -599,15 +659,16 @@ function weekStats(start){const d=new Date(start+'T12:00:00');const days=Array.f
   const daily=days.map(day=>{const l=valid.filter(s=>saleDay(s)===day);return {day,n:l.length,total:money(l.reduce((a,s)=>a+s.total,0))};});
   const cons=new Map();valid.forEach(s=>s.items.forEach(i=>{const k=i.article+' · '+i.format;const o=cons.get(k)||{k,q:0,t:0};o.q+=i.qty;o.t=money(o.t+i.qty*i.unitPrice);cons.set(k,o);}));
   const recs=view.receptions.filter(r=>days.indexOf(dayKey(new Date(r.at)))>=0);
-  return {days,daily,sales:valid,voids:view.sales.filter(s=>s.status==='annulee'&&days.indexOf(saleDay(s))>=0),recs,pay:paySums(valid),total:money(valid.reduce((a,s)=>a+s.total,0)),cons:[...cons.values()].sort((a,b)=>b.t-a.t),purchases:money(recs.reduce((a,r)=>a+num(r.amount),0))};}
+  const regs=view.settlements.filter(r=>r.status==='valide'&&days.indexOf(saleDay(r))>=0);
+  return {days,daily,sales:valid,regs,settled:sumOf(regs,'amount'),voids:view.sales.filter(s=>s.status==='annulee'&&days.indexOf(saleDay(s))>=0),recs,pay:paySums(valid,regs),total:money(valid.reduce((a,s)=>a+s.total,0)),cons:[...cons.values()].sort((a,b)=>b.t-a.t),purchases:money(recs.reduce((a,r)=>a+num(r.amount),0))};}
 function renderManage(){$('#wStart').value=weekStart;const w=weekStats(weekStart);
   $('#wKpis').innerHTML=kpi('Recettes',eur(w.total))+kpi('Tickets',w.sales.length)+kpi('Panier moyen',eur(w.sales.length?w.total/w.sales.length:0))+kpi('Achats fournisseurs',eur(w.purchases))+kpi('Annulations',w.voids.length);
   const max=Math.max(1,...w.daily.map(x=>x.total));$('#wBars').innerHTML=w.daily.map(x=>`<div class="bar"><em>${x.total?eurS(Math.round(x.total)):''}</em><i style="height:${Math.max(3,Math.round(x.total/max*150))}px"></i><small>${fmtDay(x.day)}</small></div>`).join('');
-  $('#wPay').innerHTML=METHODS.map(m=>`<div class="it"><span>${m}</span><b class="num" style="font-size:20px">${eur(w.pay[m])}</b></div>`).join('');
+  $('#wPay').innerHTML=payKeys(w.pay).map(m=>`<div class="it"><span>${payLabel(m)}</span><b class="num" style="font-size:20px">${eur(w.pay[m])}</b></div>`).join('')+`<div class="it"><span class="mut">dont règlements d’ardoise</span><b class="num mut" style="font-size:20px">${eur(w.settled)}</b></div>`;
   $('#wTop').innerHTML=w.cons.slice(0,8).map(c=>`<div class="it"><span>${esc(c.k)} <span class="mut small">× ${c.q}</span></span><b class="num" style="font-size:20px">${eur(c.t)}</b></div>`).join('')||'<div class="empty small">Aucune vente cette semaine.</div>';
   const ps=view.products.slice().sort((a,b)=>(a.active===false)-(b.active===false)||(a.category||'').localeCompare(b.category||'','fr')||sortP(a,b));
   $('#pList').innerHTML=ps.map(p=>`<div class="it click" data-edit="${p.id}" style="${p.active===false?'opacity:.5':''}"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="cdot" style="background:${p.color||'#9aa3b2'};width:16px;height:16px"></span><div style="min-width:0"><b>${esc(p.name)}</b> ${p.active===false?'<span class="pill">Archivé</span>':''}<div class="small mut">${esc(p.category||'Divers')} · ${p.formats.map(f=>esc(f.name)+' '+eurS(f.price)).join(' · ')}</div></div></div><span class="mut">Modifier</span></div>`).join('')||'<div class="empty small">Aucun article.</div>';
-  $('#xNote').textContent='Onglets : Synthèse, Rapprochement stock, Consommations, Ventes, Détail ventes, Réceptions, Inventaires, Clôtures, Stock actuel, Journal.'+(isLocal()?'':' L’appli charge les 120 derniers jours ; l’historique complet reste dans le Google Sheet.');
+  $('#xNote').textContent='Onglets : Synthèse, Rapprochement stock, Consommations, Ventes, Règlements ardoise, Ardoises, Détail ventes, Réceptions, Inventaires, Clôtures, Stock actuel, Journal.'+(isLocal()?'':' L’appli charge les 120 derniers jours ; l’historique complet reste dans le Google Sheet.');
   $('#xLock').style.display=(!isLocal()&&db.pinSet)?'':'none';
   $('#aList').innerHTML=view.audit.slice(0,40).map(a=>`<div class="it"><div style="min-width:0"><b>${esc(a.type)}</b><div class="small mut">${tLabel(a.at)}${a.device?' · '+esc(a.device):''} · ${esc(a.description)}</div></div></div>`).join('')||'<div class="empty small">Journal vide.</div>';}
 function fmtRow(f,mode){return `<div class="frow" data-fid="${esc(f.id)}"><input data-fn value="${esc(f.name)}" placeholder="Ex. 4 cl"><input data-fq type="number" inputmode="numeric" min="1" value="${f.qty}"><input data-fp type="number" inputmode="decimal" step="0.01" min="0" value="${f.price}"><button type="button" class="x" data-fdel>×</button></div>`;}
@@ -636,10 +697,10 @@ function editProduct(id){const src=id?prod(view,id):null;const p=src?clone(src):
     commit('product',{id:p.id,name,category:E('#pC').value.trim(),mode,packageSize:size,low:Math.max(0,num(E('#pL').value)),color,order:num(E('#pO').value),active,formats:fm});
     s.close();toast(src?(active?'Article enregistré':'Article archivé'):'Article créé');};
   E('#pSave').onclick=()=>save(p.active!==false);if(src)E('#pArch').onclick=()=>save(p.active===false);}
-function weeklyText(w){return `Coop'EGM · semaine du ${fmtDay(w.days[0])} au ${fmtDay(w.days[6])}\nRecettes : ${eur(w.total)} (${w.sales.length} tickets)\n${METHODS.map(m=>m+' : '+eur(w.pay[m])).join('\n')}\nAchats fournisseurs : ${eur(w.purchases)} (${w.recs.length} réception(s))\nAnnulations : ${w.voids.length}`;}
+function weeklyText(w){return `Coop'EGM · semaine du ${fmtDay(w.days[0])} au ${fmtDay(w.days[6])}\nRecettes : ${eur(w.total)} (${w.sales.length} tickets)\n${payKeys(w.pay).map(m=>payLabel(m)+' : '+eur(w.pay[m])).join('\n')}\ndont règlements d’ardoise : ${eur(w.settled)}\nAchats fournisseurs : ${eur(w.purchases)} (${w.recs.length} réception(s))\nAnnulations : ${w.voids.length}`;}
 function printWeek(){const w=weekStats(weekStart);const T=(head,rows)=>`<table><tr>${head.map(h=>`<th>${esc(h)}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
   const inv=view.inventories.filter(i=>w.days.indexOf(dayKey(new Date(i.at)))>=0).flatMap(i=>(i.lines||[]).filter(l=>l.diff).map(l=>[tLabel(i.at),l.article||'',l.theoretical,l.physical,l.diff]));
-  $('#print').innerHTML=`<h1>Coop'EGM · Rapport hebdomadaire</h1><p>Semaine du <b>${fmtDay(w.days[0])}</b> au <b>${fmtDay(w.days[6])}</b> · édité le ${tLabel(new Date())}</p><h2>Synthèse</h2><p><b>Recettes ${eur(w.total)}</b> · ${w.sales.length} tickets · ${w.voids.length} annulation(s) · achats ${eur(w.purchases)}</p><h2>Par moyen de paiement</h2>${T(['Moyen','Montant'],METHODS.map(m=>[m,eur(w.pay[m])]))}<h2>Par jour</h2>${T(['Jour','Tickets','Recettes'],w.daily.map(d=>[fmtDay(d.day),d.n,eur(d.total)]))}<h2>Consommations vendues</h2>${T(['Article · format','Quantité','Montant'],w.cons.map(c=>[c.k,c.q,eur(c.t)]))}<h2>Réceptions</h2>${T(['Date','Fournisseur','Montant','Justificatif'],w.recs.map(r=>[tLabel(r.at),r.supplier,eur(r.amount),r.fileUrl?'Drive':(r.fileName||'non joint')]))}<h2>Écarts d’inventaire</h2>${T(['Date','Article','Théorique','Physique','Écart'],inv)}<h2>Stock théorique actuel</h2>${T(['Article','Stock'],view.products.filter(p=>p.active!==false).sort(sortP).map(p=>[p.name,stockMain(p,Number(view.stock[p.id])||0)+(p.mode==='ml'?'':' u.')]))}<p><small>Document de gestion interne, à rapprocher des encaissements réels et des justificatifs.</small></p>`;window.print();}
+  $('#print').innerHTML=`<h1>Coop'EGM · Rapport hebdomadaire</h1><p>Semaine du <b>${fmtDay(w.days[0])}</b> au <b>${fmtDay(w.days[6])}</b> · édité le ${tLabel(new Date())}</p><h2>Synthèse</h2><p><b>Recettes ${eur(w.total)}</b> · ${w.sales.length} tickets · ${w.voids.length} annulation(s) · achats ${eur(w.purchases)}</p><h2>Par moyen de paiement</h2>${T(['Moyen','Montant'],payKeys(w.pay).map(m=>[payLabel(m),eur(w.pay[m])]).concat([['dont règlements d’ardoise',eur(w.settled)]]))}<h2>Par jour</h2>${T(['Jour','Tickets','Recettes'],w.daily.map(d=>[fmtDay(d.day),d.n,eur(d.total)]))}<h2>Consommations vendues</h2>${T(['Article · format','Quantité','Montant'],w.cons.map(c=>[c.k,c.q,eur(c.t)]))}<h2>Réceptions</h2>${T(['Date','Fournisseur','Montant','Justificatif'],w.recs.map(r=>[tLabel(r.at),r.supplier,eur(r.amount),r.fileUrl?'Drive':(r.fileName||'non joint')]))}<h2>Écarts d’inventaire</h2>${T(['Date','Article','Théorique','Physique','Écart'],inv)}<h2>Stock théorique actuel</h2>${T(['Article','Stock'],view.products.filter(p=>p.active!==false).sort(sortP).map(p=>[p.name,stockMain(p,Number(view.stock[p.id])||0)+(p.mode==='ml'?'':' u.')]))}<p><small>Document de gestion interne, à rapprocher des encaissements réels et des justificatifs.</small></p>`;window.print();}
 async function shareWeek(){const t=weeklyText(weekStats(weekStart));if(navigator.share){try{await navigator.share({title:'Coop’EGM',text:t});}catch(e){}}else{try{await navigator.clipboard.writeText(t);toast('Résumé copié.');}catch(e){toast('Partage indisponible.');}}}
 function download(name,blob){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),30000);}
 function periodRange(){const v=$('#xPer').value,today=dayKey();
@@ -664,23 +725,27 @@ function exportXlsx(range){range=range||periodRange();if(!range)return;const [a,
   const inD=k=>k>=a&&k<=b,atD=x=>dayKey(new Date(x));
   const sales=v.sales.filter(s=>inD(saleDay(s))),valid=sales.filter(s=>s.status==='valide'),voids=sales.filter(s=>s.status==='annulee');
   const recs=v.receptions.filter(r=>inD(atD(r.at))),invs=v.inventories.filter(i=>inD(atD(i.at))),clos=v.closings.filter(c=>inD(c.day));
-  const pay=paySums(valid),total=money(valid.reduce((x,s)=>x+s.total,0)),rec=reconcile(a,b);
+  const regsAll=v.settlements.filter(r=>inD(saleDay(r))),regs=regsAll.filter(r=>r.status==='valide');
+  const pay=paySums(valid,regs),keys=payKeys(pay),total=money(valid.reduce((x,s)=>x+s.total,0)),rec=reconcile(a,b);
+  const tabs=Object.values(v.tabs||{}).sort((x,y)=>y.balance-x.balance||x.name.localeCompare(y.name,'fr'));
   const ecartEur=money(rec.reduce((x,r)=>x+r.ecartEur,0)),caisse=money(clos.reduce((x,c)=>x+num(c.difference),0));
   const per=label.indexOf('complet')===0?'Tout l’historique chargé':(a===b?fmtDay(a):`du ${fmtDay(a)} au ${fmtDay(b)}`);
   t['Synthèse']=[["Coop'EGM · extraction",per],['Éditée le',tLabel(new Date())],[],['Recettes (EUR)',total],['Tickets',valid.length],['Panier moyen (EUR)',valid.length?money(total/valid.length):0],[],
-    ...METHODS.map(m=>[m+' (EUR)',pay[m]]),[],['Tickets annulés',voids.length],['Montant annulé (EUR)',money(voids.reduce((x,s)=>x+s.total,0))],[],
+    ...keys.map(m=>[payLabel(m)+' (EUR)',pay[m]]),['dont règlements d’ardoise (EUR)',sumOf(regs,'amount')],['Total dû sur les ardoises aujourd’hui (EUR)',money(tabs.reduce((x,t)=>x+Math.max(0,t.balance),0))],[],['Tickets annulés',voids.length],['Montant annulé (EUR)',money(voids.reduce((x,s)=>x+s.total,0))],[],
     ['Réceptions fournisseur',recs.length],['Achats fournisseurs (EUR)',money(recs.reduce((x,r)=>x+num(r.amount),0))],[],
     ['Inventaires réalisés',invs.length],['Valeur des écarts d’inventaire (EUR, au prix de vente)',ecartEur],['Écart de caisse cumulé des clôtures (EUR)',caisse],[],
-    ['Recettes par jour'],['Jour','Tickets','Recettes EUR',...METHODS]];
-  const days=[...new Set(valid.map(saleDay))].sort();days.forEach(d=>{const l=valid.filter(s=>saleDay(s)===d),p=paySums(l);t['Synthèse'].push([d,l.length,money(l.reduce((x,s)=>x+s.total,0)),...METHODS.map(m=>p[m])]);});
+    ['Recettes par jour'],['Jour','Tickets','Recettes EUR',...keys.map(payLabel),'dont règlements d’ardoise']];
+  const days=[...new Set(valid.map(saleDay).concat(regs.map(saleDay)))].sort();days.forEach(d=>{const l=valid.filter(s=>saleDay(s)===d),r=regs.filter(x=>saleDay(x)===d),p=paySums(l,r);t['Synthèse'].push([d,l.length,money(l.reduce((x,s)=>x+s.total,0)),...keys.map(m=>p[m]),sumOf(r,'amount')]);});
   t['Rapprochement stock']=[['Article','Catégorie','Unité','Stock début','Reçu','Vendu','Écart inventaire','Stock fin (théorique)','Contenants restants','Services restants (plus petit format)','Plus petit format','CA encaissé EUR','Valeur vendue au tarif du plus petit format EUR','Valeur écart au tarif du plus petit format EUR']].concat(rec.map(r=>r.row));
   const cons=new Map();valid.forEach(s=>s.items.forEach(i=>{const k=i.article+'|'+i.format;const o=cons.get(k)||[i.article,i.format,0,0,0];o[2]+=i.qty;o[3]+=i.consumed;o[4]=money(o[4]+i.qty*i.unitPrice);cons.set(k,o);}));
   t['Consommations']=[['Article','Format','Quantité vendue','Dose totale retirée (ml ou u.)','CA EUR']].concat([...cons.values()].sort((x,y)=>y[4]-x[4]));
-  t['Ventes']=[['Date','Jour','Paiement','Statut','Total EUR','Poste','Motif annulation','ID']].concat(sales.map(s=>[tLabel(s.at),saleDay(s),s.method,s.status,s.total,s.device||'',s.voidReason||'',s.id]));
+  t['Ventes']=[['Date','Jour','Paiement','Client (ardoise)','Statut','Total EUR','Poste','Motif annulation','ID']].concat(sales.map(s=>[tLabel(s.at),saleDay(s),s.method,s.client||'',s.status,s.total,s.device||'',s.voidReason||'',s.id]));
+  t['Règlements ardoise']=[['Date','Jour','Client','Paiement','Montant EUR','Statut','Poste','Motif annulation','ID']].concat(regsAll.map(r=>[tLabel(r.at),saleDay(r),r.client,r.method,r.amount,r.status,r.device||'',r.voidReason||'',r.id]));
+  t['Ardoises']=[['Nom','Solde dû EUR (négatif = avance)','Dernier mouvement']].concat(tabs.map(x=>[x.name,x.balance,x.last?tLabel(x.last):'']));
   t['Détail ventes']=[['Date','Jour','Article','Format','Quantité','Dose retirée','Prix unitaire','Total ligne','Paiement','Statut','ID vente']].concat(sales.flatMap(s=>s.items.map(i=>[tLabel(s.at),saleDay(s),i.article,i.format,i.qty,i.consumed,i.unitPrice,money(i.qty*i.unitPrice),s.method,s.status,s.id])));
   t['Réceptions']=[['Date','Fournisseur','Référence','Montant EUR','Article','Contenants','Ajout stock','Justificatif']].concat(recs.flatMap(r=>(r.lines||[]).map(l=>[tLabel(r.at),r.supplier,r.invoiceRef||'',num(r.amount),l.article||pn(l.pid),l.packages,l.added,r.fileUrl||r.fileName||''])));
   t['Inventaires']=[['Date','Motif','Article','Théorique','Physique','Écart']].concat(invs.flatMap(i=>(i.lines||[]).map(l=>[tLabel(i.at),i.reason,l.article||pn(l.pid),l.theoretical,l.physical,l.diff])));
-  t['Clôtures']=[['Jour','Fond','Espèces attendues','Espèces comptées','Écart','Total','Espèces','Carte','Virement','Autre','Observation']].concat(clos.map(c=>[c.day,c.float,c.expected,c.count,c.difference,c.total||0,(c.payments||{})['Espèces']||0,(c.payments||{})['Carte']||0,(c.payments||{})['Virement']||0,(c.payments||{})['Autre']||0,c.note||'']));
+  t['Clôtures']=[['Jour','Fond','Espèces attendues','Espèces comptées','Écart','Total','Espèces','Carte','Virement','Autre','Mis sur ardoise','dont règlements d’ardoise','Observation']].concat(clos.map(c=>[c.day,c.float,c.expected,c.count,c.difference,c.total||0,(c.payments||{})['Espèces']||0,(c.payments||{})['Carte']||0,(c.payments||{})['Virement']||0,(c.payments||{})['Autre']||0,(c.payments||{})['Ardoise']||0,c.settled||0,c.note||'']));
   t['Stock actuel']=[['Article','Catégorie','Mode','Stock (ml ou unités)','Contenance','Seuil','Sous le seuil','Actif']].concat(v.products.slice().sort(sortP).map(p=>{const q=Number(v.stock[p.id])||0;return [p.name,p.category,p.mode,q,p.packageSize,p.low,q<=p.low?'oui':'non',p.active===false?'non':'oui'];}));
   t['Journal']=[['Date','Type','Détail','Poste']].concat(v.audit.filter(x=>inD(atD(x.at))).map(x=>[tLabel(x.at),x.type,x.description,x.device||'']));
   download(`CoopEGM_${label}.xlsx`,CoopXLSX.build(t));toast('Extraction téléchargée');}
@@ -705,7 +770,9 @@ document.addEventListener('click',e=>{const t=e.target.closest('[data-tab]');if(
 $('#cats').addEventListener('click',e=>{const b=e.target.closest('[data-cat]');if(b){curCat=b.dataset.cat;renderPos();$('#gridWrap').scrollTop=0;}});
 $('#gridWrap').addEventListener('click',e=>{const b=e.target.closest('[data-add]');if(b){const [p,f]=b.dataset.add.split('|');addToCart(p,f);}});
 $('#lines').addEventListener('click',e=>{const m=e.target.closest('[data-m]'),p=e.target.closest('[data-p]');if(m){const c=cart[+m.dataset.m];if(c){c.qty--;if(c.qty<=0)cart.splice(+m.dataset.m,1);}renderPos();}if(p){const c=cart[+p.dataset.p];if(c)addToCart(c.pid,c.fid);}});
-$$('[data-pay]').forEach(b=>b.onclick=()=>{if(b.dataset.pay==='Espèces')cashSheet();else sell(b.dataset.pay);});
+$$('[data-pay]').forEach(b=>b.onclick=()=>{if(b.dataset.pay==='Espèces')cashSheet();else if(b.dataset.pay==='Ardoise')ardoiseSheet();else sell(b.dataset.pay);});
+$('#tbSearch').addEventListener('input',renderArdo);$('#tbAll').onclick=()=>{showSettled=!showSettled;renderArdo();};
+$('#tbList').addEventListener('click',e=>{const r=e.target.closest('[data-ardo]');if(r)ardoDetail(r.dataset.ardo);});
 $('#btnClear').onclick=async()=>{if(cart.length&&await ask({title:'Vider le ticket ?',text:'Les consommations non encaissées seront retirées.',ok:'Vider',danger:true})){cart=[];overStock={};renderPos();}};
 $('#btnTickets').onclick=ticketsSheet;$('#mbar').onclick=openTicket;$('#tBack').onclick=closeTicket;$('#btnTClose').onclick=closeTicket;
 $('#rLines').addEventListener('click',e=>{const b=e.target.closest('[data-r]');if(b){const id=b.dataset.r;recvDraft[id]=Math.max(0,(recvDraft[id]||0)+Number(b.dataset.d));renderRecv();}});
