@@ -521,12 +521,13 @@ function role(){if(isLocal())return 'admin';try{return sessionStorage.getItem(K.
 const isAdmin=()=>role()==='admin';
 const ROLE_TABS={caisse:['pos','ardo','close']};
 const allowed=t=>isAdmin()||(ROLE_TABS[role()]||[]).indexOf(t)>=0;
-async function codeHash(c){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(apiUrl()+'|'+c));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}catch(e){return '';}}
+async function codeHash(c){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('v2|'+apiUrl()+'|'+c));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}catch(e){return '';}}
 /* Vérifie un code auprès du script. Hors ligne : dernier résultat connu sur cet appareil (empreinte, jamais le code en clair). */
-async function checkCode(c){const h=await codeHash(c),known=load(K.codes,{});
-  try{const r=await api({action:'pin',pin:c});const ro=r&&r.ok?(r.role||'admin'):'';
-    if(h){if(ro)known[h]=ro;else delete known[h];store(K.codes,known);}return ro;}
-  catch(e){if(h&&known[h])return known[h];throw e;}}
+async function checkCode(c){const h=await codeHash(c),known=load(K.codes,{});let r;
+  try{r=await api({action:'pin',pin:c});}catch(e){if(h&&known[h])return known[h];throw e;}
+  /* Un script qui ne renvoie pas de rôle est une ancienne version : on refuse au lieu de donner l'accès admin */
+  if(r&&r.ok&&!r.role){store(K.codes,{});const e=new Error('Le script Google n’est pas à jour : redéployez la nouvelle version (Gérer les déploiements > Nouvelle version).');e.server=true;throw e;}
+  const ro=r&&r.ok?r.role:'';if(h){if(ro)known[h]=ro;else delete known[h];store(K.codes,known);}return ro;}
 function setRole(c,r){try{sessionStorage.setItem(K.pin,c);sessionStorage.setItem(K.role,r);}catch(e){}}
 /* Code admin demandé pour une seule action (annulation ancienne), sans passer l'appareil en admin */
 async function adminCode(){if(isAdmin())return pin();
@@ -539,14 +540,14 @@ function lockApp(msg){try{sessionStorage.removeItem(K.pin);sessionStorage.remove
 function enter(msg){$('#lock').classList.remove('on');renderTabs();setSync();go(allowed(cur)?cur:'pos');flush();if(msg)toast(msg);}
 async function tryUnlock(){if(unlocking||!lockCode)return;unlocking=true;drawLock('Vérification…');
   try{const r=await checkCode(lockCode);if(r){setRole(lockCode,r);enter(r==='admin'?'Accès admin : tout est accessible':'Accès caisse');}else{lockCode='';drawLock('Code incorrect.',true);}}
-  catch(e){lockCode='';drawLock('Pas de connexion : ce code n’a jamais été utilisé sur cet appareil, impossible de le vérifier.',true);}
+  catch(e){lockCode='';if(e.server)return drawLock(e.message,true);drawLock('Pas de connexion : ce code n’a jamais été utilisé sur cet appareil, impossible de le vérifier.',true);}
   finally{unlocking=false;}}
 function lockKey(k){if(unlocking)return;if(k==='ok')return tryUnlock();if(k==='del')lockCode=lockCode.slice(0,-1);else if(lockCode.length<12)lockCode+=k;drawLock('');}
 /* Démarrage : si le script ne demande aucun code, on entre directement */
 async function boot(){renderTabs();setSync();if(isLocal()||role())return enter();
   showLock('Connexion…');
   try{const r=await checkCode('');if(r){setRole('',r);return enter();}drawLock('');}
-  catch(e){drawLock('Hors ligne : saisissez un code déjà utilisé sur cet appareil.');}}
+  catch(e){if(e.server)return drawLock(e.message,true);drawLock('Hors ligne : saisissez un code déjà utilisé sur cet appareil.');}}
 
 /* ---------- Feuilles, confirmations, messages ---------- */
 function sheet(html,opt={}){const ov=document.createElement('div');ov.className='ov';ov.innerHTML=`<div class="sh${opt.wide?' wide':''}">${html}</div>`;document.body.append(ov);let closed=false;
