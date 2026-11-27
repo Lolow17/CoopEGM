@@ -26,6 +26,11 @@
  *   PIN_CAISSE vide → la caisse est ouverte sans code, seul l'admin en demande un.
  *   Après un changement de code, les appareils redemandent le code.
  *
+ * PROFILS
+ * L'admin crée des profils dans l'appli (Gestion > Profils) : un nom, un code et
+ * les onglets autorisés. Ils sont rangés dans l'onglet Profils. Le nom du profil
+ * est noté dans la colonne poste de chaque vente, réception, clôture, etc.
+ *
  * ARDOISES
  * Une vente payée « Ardoise » est notée au nom d'une personne (colonne client
  * de l'onglet Ventes). Quand la personne paie, un règlement est ajouté dans
@@ -56,6 +61,7 @@ const HEAD = {
   Inventaires: ['id', 'date', 'motif', 'ecarts', 'detail', 'poste', 'lignes'],
   Clotures:    ['id', 'date', 'jour', 'fond', 'especes_comptees', 'especes_attendues', 'ecart', 'total', 'especes', 'carte', 'virement', 'autre', 'note', 'poste', 'ardoise', 'reglements_ardoise'],
   Journal:     ['date', 'type', 'detail', 'ref', 'poste'],
+  Profils:     ['id', 'nom', 'code', 'onglets', 'actif', 'maj'],
   Ops:         ['opId', 'date', 'type']
 };
 
@@ -75,21 +81,21 @@ function doPost(e) {
   try { body = JSON.parse(e.postData.contents); }
   catch (err) { return json({ ok: false, error: 'Requête illisible' }); }
   try {
-    const conf = config(), role = roleOf(body.pin, conf);
-    if (body.action === 'pin') return json({ ok: !!role, role: role });
+    const conf = config(), who = whoIs(body.pin, conf), role = who.role;
+    if (body.action === 'pin') return json({ ok: !!role, role: role, nom: who.nom, onglets: who.onglets });
     if (!role) return json({ ok: false, auth: true, error: 'Code requis' });
-    if (body.action === 'state') return json({ ok: true, role: role, state: state() });
+    if (body.action === 'state') return json({ ok: true, role: role, state: state(who) });
     const lock = LockService.getScriptLock();
     lock.waitLock(25000);
     try {
       if (body.action === 'upload') {
-        if (role !== 'admin' && ongletsCaisse(conf).indexOf('reception') < 0) return json({ ok: false, error: 'Code admin requis' });
+        if (role !== 'admin' && who.onglets.indexOf('reception') < 0) return json({ ok: false, error: 'Code admin requis' });
         return json(upload(body));
       }
       if (body.action === 'ops') {
         const results = applyOps(body.ops || [], body.device, conf);
         SpreadsheetApp.flush();
-        return json({ ok: true, results: results, state: state() });
+        return json({ ok: true, results: results, state: state(whoIs(body.pin, config())) });
       }
     } finally { lock.releaseLock(); }
     return json({ ok: false, error: 'Action inconnue' });
@@ -154,14 +160,31 @@ function ongletsCaisse(conf) {
 }
 /* Droit sur une action : admin, ou code caisse si l'onglet est listé dans ONGLETS_CAISSE */
 function peut(ctx, cle) { return ctx.admin || (ctx.role === 'caisse' && ctx.onglets.indexOf(cle) >= 0); }
-function roleOf(code, conf) {
-  const c = codes(conf), a = c.admin, k = c.caisse, p = String(code || '').trim();
-  if (!a) return 'admin';
-  if (p && p === a) return 'admin';
-  if (!k) return 'caisse';
-  if (p && p === k) return 'caisse';
-  return '';
+const MOTS_ONGLETS = ['caisse', 'ardoises', 'reception', 'stock', 'inventaire', 'cloture', 'gestion'];
+function motsOnglets(v) {
+  return String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[,;\s]+/)
+    .map(function (w) { return w === 'ardoise' ? 'ardoises' : w; })
+    .filter(function (w, i, a) { return MOTS_ONGLETS.indexOf(w) >= 0 && a.indexOf(w) === i; });
 }
+function profils() {
+  return rows('Profils').filter(function (r) { return r.id !== ''; }).map(function (r) {
+    return { id: String(r.id), name: String(r.nom || ''), code: String(r.code || '').trim(), tabs: motsOnglets(r.onglets),
+             active: !(r.actif === false || /^(false|faux|non|0)$/i.test(String(r.actif))) };
+  });
+}
+/* Qui est derrière un code : { role: 'admin' | 'caisse' | '', nom, onglets } */
+function whoIs(code, conf) {
+  const c = codes(conf), a = c.admin, k = c.caisse, p = String(code || '').trim();
+  if (!a) return { role: 'admin', nom: 'Admin', onglets: MOTS_ONGLETS };
+  if (p && p === a) return { role: 'admin', nom: 'Admin', onglets: MOTS_ONGLETS };
+  const pr = profils().filter(function (x) { return x.active; });
+  const m = p ? pr.filter(function (x) { return x.code === p; })[0] : null;
+  if (m) return { role: 'caisse', nom: m.name, onglets: m.tabs, id: m.id };
+  if (k && p === k) return { role: 'caisse', nom: 'Caisse', onglets: ongletsCaisse(conf) };
+  if (!k && !pr.length) return { role: 'caisse', nom: 'Caisse', onglets: ongletsCaisse(conf) };
+  return { role: '', nom: '', onglets: [] };
+}
+function roleOf(code, conf) { return whoIs(code, conf).role; }
 function config() { const o = {}; rows('Config').forEach(function (r) { o[String(r.cle).trim().toUpperCase()] = r.valeur; }); return o; } // « pin » ou « PIN » : même ligne
 function setConfig(k, v) {
   const s = sh('Config'), last = s.getLastRow();
@@ -207,10 +230,11 @@ function applyOps(ops, device, conf) {
   const os = sh('Ops'), n = os.getLastRow();
   const done = new Set(n > 1 ? os.getRange(2, 1, n - 1, 1).getValues().map(function (r) { return String(r[0]); }) : []);
   const ctx = {
-    P: loadProducts(), device: S(device || ''), now: new Date(), admin: false, role: '', onglets: ongletsCaisse(conf),
+    profilsDirty: false,
+    P: loadProducts(), device: S(device || ''), now: new Date(), admin: false, role: '', onglets: [],
     out: { Ventes: [], Reglements: [], Mouvements: [], Receptions: [], Inventaires: [], Clotures: [], Journal: [], Ops: [] }
   };
-  const results = [];
+  const results = [], cacheWho = {}, baseDevice = S(device || '');
   ops.forEach(function (op) {
     if (!op || !op.opId) return;
     const id = String(op.opId);
@@ -218,7 +242,9 @@ function applyOps(ops, device, conf) {
     try {
       const h = HANDLERS[op.type];
       if (!h) throw new Error('Type inconnu : ' + op.type);
-      ctx.role = roleOf(op.pin, conf); ctx.admin = ctx.role === 'admin';
+      const w = cacheWho[String(op.pin || '')] || (cacheWho[String(op.pin || '')] = whoIs(op.pin, conf));
+      ctx.role = w.role; ctx.admin = w.role === 'admin'; ctx.onglets = w.onglets;
+      ctx.device = baseDevice + (w.nom ? (baseDevice ? ' · ' : '') + S(w.nom) : '');
       h(op.data || {}, ctx);
       ctx.out.Ops.push([id, ctx.now, String(op.type)]);
       done.add(id);
@@ -364,6 +390,25 @@ const HANDLERS = {
     journal(ctx, 'Clôture', day + ' · écart ' + eur(diff), d.id);
   },
 
+  profile: function (d, ctx) {
+    if (!ctx.admin) throw new Error('Code admin requis pour gérer les profils');
+    const name = cleanName(d.name), code = String(d.code || '').trim(), id = String(d.id || uid());
+    if (!name) throw new Error('Nom du profil manquant');
+    if (!/^\d{4,12}$/.test(code)) throw new Error('Le code doit faire 4 à 12 chiffres');
+    const c = codes(config());
+    if (code === c.admin) throw new Error('Ce code est déjà le code admin');
+    if (code === c.caisse) throw new Error('Ce code est déjà le code caisse de la ligne PIN_CAISSE');
+    const all = profils();
+    if (all.some(function (x) { return x.id !== id && x.code === code; })) throw new Error('Ce code est déjà utilisé par un autre profil');
+    const tabs = motsOnglets((d.tabs || []).join(','));
+    const row = [S(id), S(name), "'" + code, tabs.join(', '), d.active !== false, ctx.now];
+    const s = sh('Profils'), last = s.getLastRow();
+    let r = 0;
+    if (last > 1) { const ids = s.getRange(2, 1, last - 1, 1).getValues(); for (let i = 0; i < ids.length; i++) if (String(ids[i][0]) === id) { r = i + 2; break; } }
+    if (r) s.getRange(r, 1, 1, row.length).setValues([row]); else s.getRange(last + 1, 1, 1, row.length).setValues([row]);
+    journal(ctx, r ? 'Profil modifié' : 'Profil créé', name + ' · ' + (tabs.join(', ') || 'aucun onglet') + (d.active === false ? ' · désactivé' : ''), id);
+  },
+
   product: function (d, ctx) {
     if (!peut(ctx, 'gestion')) throw new Error('Code admin requis');
     const name = String(d.name || '').trim();
@@ -390,7 +435,7 @@ const HANDLERS = {
 
 /* ---------------- État renvoyé à l'appli ---------------- */
 
-function state() {
+function state(who) {
   if (!('ONGLETS_CAISSE' in config())) sh('Config').appendRow(['ONGLETS_CAISSE', ONGLETS_CAISSE_DEFAUT, 'Onglets ouverts au code CAISSE. Mots : caisse, ardoises, reception, stock, inventaire, cloture, gestion']);
   const cutoff = Date.now() - PERIODE_JOURS * 864e5;
   const keep = function (r) { const t = toDate(r.date).getTime(); return t >= cutoff; };
@@ -442,6 +487,8 @@ function state() {
     }),
     pinSet: !!codes(config()).admin,
     cashierPinSet: !!codes(config()).caisse,
+    me: who ? { role: who.role, nom: who.nom, onglets: who.onglets } : null,
+    profiles: who && who.role === 'admin' ? profils() : [],
     ongletsCaisse: ongletsCaisse(config()),
     serverTime: new Date().toISOString()
   };

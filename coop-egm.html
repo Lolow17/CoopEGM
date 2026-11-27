@@ -366,6 +366,11 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),li
       </div>
       <div class="cols2" style="margin-top:10px"><button class="btn" id="wPrint">Imprimer / PDF</button><button class="btn" id="wShare">Partager le résumé</button></div>
     </div>
+    <div class="card" id="profCard">
+      <div class="headRow"><h2>Profils et codes</h2><button class="btn pri sm" id="prNew">Nouveau profil</button></div>
+      <p class="small mut" style="margin-top:-6px">Chaque profil a son code et n’ouvre que les onglets cochés. Son nom est noté sur chaque vente. Réservé à l’admin.</p>
+      <div class="list" id="prList"></div>
+    </div>
     <div class="card">
       <div class="headRow"><h2>Articles et formats</h2><button class="btn pri sm" id="pNew">Nouvel article</button></div>
       <div class="list" id="pList"></div>
@@ -452,7 +457,7 @@ const isLocal=()=>!apiUrl();
 const dbKey=()=>isLocal()?'coopegm3_db_local':'coopegm3_db_srv';
 
 /* ---------- Données ---------- */
-function emptyDb(){return {products:[],stock:{},sales:[],settlements:[],tabs:{},receptions:[],inventories:[],closings:[],audit:[],pinSet:false};}
+function emptyDb(){return {products:[],stock:{},sales:[],settlements:[],tabs:{},receptions:[],inventories:[],closings:[],audit:[],profiles:[],me:null,pinSet:false};}
 function demoDb(){const F=(name,qty,price)=>({id:uid(),name,qty,price});const list=[
   ['Bière 33 cl','Bières','unit',1,24,'#f2b544',[F('Bouteille',1,2.5)],48],
   ['Pression (fût 30 L)','Bières','ml',30000,5000,'#e8743b',[F('Demi 25 cl',250,3),F('Pinte 50 cl',500,5)],30000],
@@ -484,6 +489,7 @@ function applyOp(s,op){const d=op.data||{};
   else if(op.type==='reception'){if(s.receptions.some(x=>x.id===d.id))return;const lines=d.lines.map(l=>{const p=prod(s,l.pid);return {pid:l.pid,article:p?p.name:'',packages:l.packages,added:l.packages*(p&&p.mode==='ml'?p.packageSize:1)};});s.receptions.push(Object.assign({},d,{lines}));lines.forEach(l=>stockAdd(s,l.pid,l.added));addLog(s,'Réception',`${d.supplier} · ${eur(d.amount)} · ${lines.length} réf.`,d.id);}
   else if(op.type==='inventory'){if(s.inventories.some(x=>x.id===d.id))return;const lines=d.lines.map(l=>{const th=Number(s.stock[l.pid])||0;const p=prod(s,l.pid);return {pid:l.pid,article:p?p.name:'',theoretical:th,physical:l.physical,diff:Math.round((l.physical-th)*1000)/1000};});lines.forEach(l=>s.stock[l.pid]=l.physical);s.inventories.push({id:d.id,at:d.at,reason:d.reason,lines});addLog(s,'Inventaire',`${d.reason} · ${lines.filter(l=>l.diff).length} écart(s)`,d.id);}
   else if(op.type==='closing'){if(s.closings.some(x=>x.id===d.id))return;const sl=s.sales.filter(x=>saleDay(x)===d.day&&x.status==='valide'),rg=s.settlements.filter(x=>saleDay(x)===d.day&&x.status==='valide');const pay=paySums(sl,rg);const total=sumOf(sl,'total');const expected=money(d.float+pay['Espèces']);s.closings.push({id:d.id,at:d.at,day:d.day,float:d.float,count:d.count,expected,difference:money(d.count-expected),payments:pay,settled:sumOf(rg,'amount'),total,note:d.note});addLog(s,'Clôture',`${d.day} · écart ${eur(d.count-expected)}`,d.id);}
+  else if(op.type==='profile'){s.profiles=s.profiles||[];const i=s.profiles.findIndex(x=>x.id===d.id);const v=Object.assign({},d);if(i>=0)s.profiles[i]=v;else s.profiles.push(v);addLog(s,i>=0?'Profil modifié':'Profil créé',d.name,d.id);}
   else if(op.type==='product'){const i=s.products.findIndex(p=>p.id===d.id);if(i>=0)s.products[i]=clone(d);else s.products.push(clone(d));if(s.stock[d.id]==null)s.stock[d.id]=0;addLog(s,i>=0?'Article modifié':'Article créé',d.name,d.id);}
 }
 function derive(){const v=clone(db);queue.forEach(op=>applyOp(v,op));return v;}
@@ -497,7 +503,7 @@ function commit(type,data,opPin){const op={opId:uid(),type,data,at:new Date().to
 async function api(body){const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),30000);try{const r=await fetch(apiUrl(),{method:'POST',body:JSON.stringify(body),signal:ctl.signal});return await r.json();}catch(e){throw new Error(e.name==='AbortError'?'Délai dépassé':'Réseau indisponible');}finally{clearTimeout(t);}}
 async function apiGet(url){const u=url||apiUrl();const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),30000);try{const r=await fetch(u+(u.indexOf('?')>=0?'&':'?')+'action=state&_='+Date.now(),{signal:ctl.signal});return await r.json();}catch(e){throw new Error(e.name==='AbortError'?'Délai dépassé':'Réseau indisponible');}finally{clearTimeout(t);}}
 function scheduleFlush(ms){clearTimeout(flushTimer);flushTimer=setTimeout(flush,ms);}
-function setServer(state){const before=JSON.stringify(db.ongletsCaisse||null);db=normalize(state);store(dbKey(),db);lastSync=new Date().toISOString();store(K.last,lastSync);view=derive();if(before!==JSON.stringify(db.ongletsCaisse||null)&&!$('#lock').classList.contains('on')){renderTabs();if(!allowed(cur))go('pos');}refresh();}
+function setServer(state){const before=JSON.stringify([db.ongletsCaisse||null,caisseWords()]);db=normalize(state);if(state&&state.me&&state.me.role){const m=me()||{};if(state.me.role!==role()||JSON.stringify(state.me.onglets)!==JSON.stringify(m.onglets)||state.me.nom!==m.nom)setRole(pin(),state.me);}store(dbKey(),db);lastSync=new Date().toISOString();store(K.last,lastSync);view=derive();if(before!==JSON.stringify([db.ongletsCaisse||null,caisseWords()])&&!$('#lock').classList.contains('on')){renderTabs();if(!allowed(cur))go('pos');}refresh();}
 async function flush(){if(isLocal()||flushing||!role())return;if(!queue.length)return pull();flushing=true;setSync();const batch=queue.slice(0,30);
   try{const res=await api({action:'ops',ops:batch,device:cfg.device||'',pin:pin()});if(res&&res.auth){lockApp('Code modifié ou expiré : saisissez votre code. Les ventes en attente seront envoyées ensuite.');return;}if(!res||!res.ok)throw new Error((res&&res.error)||'Réponse invalide');
     const sent=new Set(batch.map(o=>o.opId));queue=queue.filter(o=>!sent.has(o.opId));store(K.q,queue);syncErr='';
@@ -513,35 +519,38 @@ function setSync(){const el=$('#sync');let c,t;
   else if(queue.length){c='pending';t=`${queue.length} en attente`;}
   else{c='ok';t=lastSync?`Synchro ${hm(lastSync)}`:'Connexion…';}
   el.className='sync '+c;$('em',el).textContent=t;$('#posteName').textContent=cfg.device||'Caisse';
-  $('#lockBtn').style.display=isLocal()?'none':'';$('#roleName').textContent=isAdmin()?'Admin':'Caisse';}
+  $('#lockBtn').style.display=isLocal()?'none':'';$('#roleName').textContent=isAdmin()?'Admin':((me()||{}).nom||'Caisse');}
 
-/* ---------- Codes d'accès : admin (tout) / caisse (onglets de la ligne ONGLETS_CAISSE du Sheet) ---------- */
+/* ---------- Codes d'accès : admin (tout) / profils créés par l'admin (onglets cochés) / code caisse de secours ---------- */
 function pin(){try{return sessionStorage.getItem(K.pin)||'';}catch(e){return '';}}
 function role(){if(isLocal())return 'admin';try{return sessionStorage.getItem(K.role)||'';}catch(e){return '';}}
 const isAdmin=()=>role()==='admin';
 const WORD_TAB={caisse:'pos',ardoises:'ardo',ardoise:'ardo',reception:'recv',stock:'stock',cloture:'close',gestion:'manage'};
-const caisseWords=()=>Array.isArray(db.ongletsCaisse)?db.ongletsCaisse:['caisse','ardoises','cloture','reception'];
+function me(){try{return JSON.parse(sessionStorage.getItem(K.role+'_me')||'null');}catch(e){return null;}}
+const caisseWords=()=>{const m=me();if(m&&Array.isArray(m.onglets))return m.onglets;return Array.isArray(db.ongletsCaisse)?db.ongletsCaisse:['caisse','ardoises','cloture','reception'];};
 const caisseCan=w=>role()==='caisse'&&caisseWords().indexOf(w)>=0;
 const allowed=t=>isAdmin()||(role()==='caisse'&&caisseWords().some(w=>WORD_TAB[w]===t));
 async function codeHash(c){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('v2|'+apiUrl()+'|'+c));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}catch(e){return '';}}
 /* Vérifie un code auprès du script. Hors ligne : dernier résultat connu sur cet appareil (empreinte, jamais le code en clair). */
 async function checkCode(c){const h=await codeHash(c),known=load(K.codes,{});let r;
-  try{r=await api({action:'pin',pin:c});}catch(e){if(h&&known[h])return known[h];throw e;}
+  try{r=await api({action:'pin',pin:c});}catch(e){if(h&&known[h])return infoOf(known[h]);throw e;}
   /* Un script qui ne renvoie pas de rôle est une ancienne version : on refuse au lieu de donner l'accès admin */
   if(r&&r.ok&&!r.role){store(K.codes,{});const e=new Error('Le script Google n’est pas à jour : redéployez la nouvelle version (Gérer les déploiements > Nouvelle version).');e.server=true;throw e;}
-  const ro=r&&r.ok?r.role:'';if(h){if(ro)known[h]=ro;else delete known[h];store(K.codes,known);}return ro;}
-function setRole(c,r){try{sessionStorage.setItem(K.pin,c);sessionStorage.setItem(K.role,r);}catch(e){}}
+  const ro=r&&r.ok&&r.role?{role:r.role,nom:r.nom||(r.role==='admin'?'Admin':'Caisse'),onglets:r.onglets||null}:null;if(h){if(ro)known[h]=ro;else delete known[h];store(K.codes,known);}return ro;}
+/* Ancien cache (texte) ou nouveau (profil) */
+const infoOf=x=>!x?null:(typeof x==='string'?{role:x,nom:x==='admin'?'Admin':'Caisse',onglets:null}:x);
+function setRole(c,info){info=infoOf(info);try{sessionStorage.setItem(K.pin,c);sessionStorage.setItem(K.role,info.role);sessionStorage.setItem(K.role+'_me',JSON.stringify({nom:info.nom,onglets:info.onglets}));}catch(e){}}
 /* Code admin demandé pour une seule action (annulation ancienne), sans passer l'appareil en admin */
 async function adminCode(){if(isAdmin())return pin();
   const c=await askText({title:'Code admin',text:'Cette action est réservée à l’admin.',label:'Code admin',type:'password',ok:'Valider',inputmode:'numeric'});if(c==null)return null;
-  try{if(await checkCode(c)==='admin')return c;toast('Code admin incorrect.');}catch(e){toast('Vérification impossible : '+e.message);}return null;}
+  try{const i=await checkCode(c);if(i&&i.role==='admin')return c;toast('Code admin incorrect.');}catch(e){toast('Vérification impossible : '+e.message);}return null;}
 let lockCode='',unlocking=false;
 function drawLock(msg,bad){$('#lockDots').innerHTML=Array.from({length:Math.max(4,lockCode.length)},(_,i)=>`<i class="${i<lockCode.length?'f':''}"></i>`).join('');if(msg!=null){const m=$('#lockMsg');m.textContent=msg;m.className='lockMsg'+(bad?' bad':'');}}
 function showLock(msg,bad){lockCode='';closeTicket();$$('.ov,.toast').forEach(o=>o.remove());$('#lock').classList.add('on');drawLock(msg||'',bad);}
-function lockApp(msg){try{sessionStorage.removeItem(K.pin);sessionStorage.removeItem(K.role);}catch(e){}showLock(msg||'');setSync();}
+function lockApp(msg){try{sessionStorage.removeItem(K.pin);sessionStorage.removeItem(K.role);sessionStorage.removeItem(K.role+'_me');}catch(e){}showLock(msg||'');setSync();}
 function enter(msg){$('#lock').classList.remove('on');renderTabs();setSync();go(allowed(cur)?cur:'pos');flush();if(msg)toast(msg);}
 async function tryUnlock(){if(unlocking||!lockCode)return;unlocking=true;drawLock('Vérification…');
-  try{const r=await checkCode(lockCode);if(r){setRole(lockCode,r);enter(r==='admin'?'Accès admin : tout est accessible':'Accès caisse');}else{lockCode='';drawLock('Code incorrect.',true);}}
+  try{const r=await checkCode(lockCode);if(r){setRole(lockCode,r);enter(r.role==='admin'?'Accès admin : tout est accessible':'Bonjour '+r.nom);}else{lockCode='';drawLock('Code incorrect.',true);}}
   catch(e){lockCode='';if(e.server)return drawLock(e.message,true);drawLock('Pas de connexion : ce code n’a jamais été utilisé sur cet appareil, impossible de le vérifier.',true);}
   finally{unlocking=false;}}
 function lockKey(k){if(unlocking)return;if(k==='ok')return tryUnlock();if(k==='del')lockCode=lockCode.slice(0,-1);else if(lockCode.length<12)lockCode+=k;drawLock('');}
@@ -724,8 +733,27 @@ function renderManage(){$('#wStart').value=weekStart;const w=weekStats(weekStart
   const ps=view.products.slice().sort((a,b)=>(a.active===false)-(b.active===false)||(a.category||'').localeCompare(b.category||'','fr')||sortP(a,b));
   $('#pList').innerHTML=ps.map(p=>`<div class="it click" data-edit="${p.id}" style="${p.active===false?'opacity:.5':''}"><div style="display:flex;gap:12px;align-items:center;min-width:0"><span class="cdot" style="background:${p.color||'#9aa3b2'};width:16px;height:16px"></span><div style="min-width:0"><b>${esc(p.name)}</b> ${p.active===false?'<span class="pill">Archivé</span>':''}<div class="small mut">${esc(p.category||'Divers')} · ${p.formats.map(f=>esc(f.name)+' '+eurS(f.price)).join(' · ')}</div></div></div><span class="mut">Modifier</span></div>`).join('')||'<div class="empty small">Aucun article.</div>';
   $('#xNote').textContent='Onglets : Synthèse, Rapprochement stock, Consommations, Ventes, Règlements ardoise, Ardoises, Détail ventes, Réceptions, Inventaires, Clôtures, Stock actuel, Journal.'+(isLocal()?'':' L’appli charge les 120 derniers jours ; l’historique complet reste dans le Google Sheet.');
+  $('#profCard').style.display=isAdmin()&&!isLocal()?'':'none';
+  $('#prList').innerHTML=(view.profiles||[]).slice().sort((a,b)=>(a.active===false)-(b.active===false)||a.name.localeCompare(b.name,'fr')).map(p=>`<div class="it click" data-prof="${esc(p.id)}" style="${p.active===false?'opacity:.5':''}"><div style="min-width:0"><b>${esc(p.name)}</b> ${p.active===false?'<span class="pill">Désactivé</span>':''}<div class="small mut">Code ${'•'.repeat(String(p.code||'').length)} · ${(p.tabs||[]).map(w=>TAB_WORDS[w]||w).join(', ')||'aucun onglet'}</div></div><span class="mut">Modifier</span></div>`).join('')||'<div class="empty small">Aucun profil. Créez-en un par barman pour suivre qui vend quoi.</div>';
   $('#xLock').style.display=isLocal()?'none':'';
   $('#aList').innerHTML=view.audit.slice(0,40).map(a=>`<div class="it"><div style="min-width:0"><b>${esc(a.type)}</b><div class="small mut">${tLabel(a.at)}${a.device?' · '+esc(a.device):''} · ${esc(a.description)}</div></div></div>`).join('')||'<div class="empty small">Journal vide.</div>';}
+const TAB_WORDS={caisse:'Caisse',ardoises:'Ardoises',reception:'Réception',stock:'Stock',inventaire:'Inventaire',cloture:'Clôture',gestion:'Gestion'};
+function editProfile(id){if(!isAdmin())return toast('Réservé à l’admin.');const src=id?(view.profiles||[]).find(x=>x.id===id):null;
+  const p=src?clone(src):{id:uid(),name:'',code:'',tabs:['caisse','ardoises','cloture'],active:true};let tabs=p.tabs.slice();
+  const s=sheet(`<h3>${src?'Modifier le profil':'Nouveau profil'}</h3>
+    <label class="fld"><span>Nom (barman, poste…)</span><input id="prN" value="${esc(p.name)}" placeholder="Ex. Kevin"></label>
+    <label class="fld"><span>Code (4 à 12 chiffres)</span><input id="prC" value="${esc(p.code)}" inputmode="numeric" autocomplete="off" placeholder="Ex. 1234"></label>
+    <div class="fld"><span>Onglets autorisés</span><div class="cats" id="prT" style="flex-wrap:wrap;padding:0">${Object.keys(TAB_WORDS).map(w=>`<button type="button" class="cat${tabs.indexOf(w)>=0?' on':''}" data-w="${w}">${TAB_WORDS[w]}</button>`).join('')}</div>
+    <p class="small mut" style="margin:8px 0 0">Inventaire = faire le comptage. Gestion = articles, prix et extractions.</p></div>
+    <div class="acts">${src?`<button class="btn danger" id="prA">${p.active===false?'Réactiver':'Désactiver'}</button>`:''}<button class="btn ghost" data-x>Annuler</button><button class="btn pri" id="prS">Enregistrer</button></div>`);
+  const E=x=>$(x,s.el);
+  E('#prT').addEventListener('click',e=>{const b=e.target.closest('[data-w]');if(!b)return;const w=b.dataset.w;tabs=tabs.indexOf(w)>=0?tabs.filter(x=>x!==w):tabs.concat(w);b.classList.toggle('on',tabs.indexOf(w)>=0);});
+  const save=active=>{const name=E('#prN').value.trim(),code=E('#prC').value.trim();
+    if(!name)return toast('Nom obligatoire.');if(!/^\d{4,12}$/.test(code))return toast('Le code doit faire 4 à 12 chiffres.');
+    if(code===pin())return toast('Ce code est le code admin.');if((view.profiles||[]).some(x=>x.id!==p.id&&String(x.code)===code))return toast('Code déjà utilisé par un autre profil.');
+    if(!tabs.length)return toast('Cochez au moins un onglet.');
+    commit('profile',{id:p.id,name,code,tabs:Object.keys(TAB_WORDS).filter(w=>tabs.indexOf(w)>=0),active});s.close();toast(src?(active?'Profil enregistré':'Profil désactivé'):'Profil créé');};
+  E('#prS').onclick=()=>save(p.active!==false);if(src)E('#prA').onclick=()=>save(p.active===false);}
 function fmtRow(f,mode){return `<div class="frow" data-fid="${esc(f.id)}"><input data-fn value="${esc(f.name)}" placeholder="Ex. 4 cl"><input data-fq type="number" inputmode="numeric" min="1" value="${f.qty}"><input data-fp type="number" inputmode="decimal" step="0.01" min="0" value="${f.price}"><button type="button" class="x" data-fdel>×</button></div>`;}
 function editProduct(id){const src=id?prod(view,id):null;const p=src?clone(src):{id:uid(),name:'',category:'',mode:'ml',packageSize:700,low:0,color:COLORS[view.products.length%COLORS.length],order:view.products.length,active:true,formats:[{id:uid(),name:'4 cl',qty:40,price:3}]};
   const cats=[...new Set(view.products.map(x=>x.category).filter(Boolean))];let color=p.color||COLORS[0];
@@ -835,6 +863,7 @@ $('#wPrint').onclick=printWeek;$('#wShare').onclick=shareWeek;$('#xXlsx').onclic
 $('#xLock').onclick=()=>lockApp();$('#lockBtn').onclick=()=>lockApp();$('#lockConn').onclick=connSheet;
 $('#lockKeys').addEventListener('click',e=>{const b=e.target.closest('[data-k]');if(b)lockKey(b.dataset.k);});
 document.addEventListener('keydown',e=>{if(!$('#lock').classList.contains('on')||$('.ov'))return;if(/^[0-9A-Za-z]$/.test(e.key))lockKey(e.key);else if(e.key==='Backspace')lockKey('del');else if(e.key==='Enter')lockKey('ok');});
+$('#prNew').onclick=()=>editProfile();$('#prList').addEventListener('click',e=>{const r=e.target.closest('[data-prof]');if(r)editProfile(r.dataset.prof);});
 $('#pNew').onclick=()=>editProduct();$('#pList').addEventListener('click',e=>{const r=e.target.closest('[data-edit]');if(r)editProduct(r.dataset.edit);});
 $('#sync').onclick=connSheet;
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')flush();});
