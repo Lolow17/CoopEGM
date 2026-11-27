@@ -17,8 +17,9 @@
  * CODES D'ACCÈS (onglet Config)
  *   PIN         = code ADMIN : accès à tout (Gestion, Réception, Stock,
  *                 inventaire, articles, annulations anciennes).
- *   PIN_CAISSE  = code CAISSE : Caisse, Ardoises, Clôture ; annulation d'un
- *                 ticket ou d'un règlement seulement dans les 5 minutes.
+ *   PIN_CAISSE  = code CAISSE : ouvre les onglets listés à la ligne
+ *                 ONGLETS_CAISSE (ex. : caisse, ardoises, cloture, reception) ;
+ *                 annulation d'un ticket ou d'un règlement seulement dans les 5 minutes.
  *   Les deux codes doivent être différents. Tapez-les avec une apostrophe
  *   devant ('0123) pour garder les zéros du début.
  *   PIN vide        → aucun code, tout est ouvert.
@@ -41,7 +42,10 @@ const REGLEMENT = ['Espèces', 'Carte', 'Virement'];   // moyens acceptés pour 
 /* CODES D'ACCÈS — s'ils sont remplis ici, ils sont utilisés en priorité (l'onglet Config est ignoré).
  * Laisser vide ('') pour lire les lignes PIN / PIN_CAISSE de l'onglet Config. */
 const CODE_ADMIN = '';    // accès à tout
-const CODE_CAISSE = '';   // Caisse, Ardoises, Clôture
+const CODE_CAISSE = '';   // ouvre les onglets listés dans Config, ligne ONGLETS_CAISSE
+/* Onglets ouverts au code CAISSE : réglable dans l'onglet Config, ligne ONGLETS_CAISSE.
+ * Mots possibles : caisse, ardoises, reception, stock, inventaire, cloture, gestion */
+const ONGLETS_CAISSE_DEFAUT = 'caisse, ardoises, cloture, reception';
 const HEAD = {
   Config:      ['cle', 'valeur', 'aide'],
   Produits:    ['id', 'nom', 'categorie', 'mode', 'contenance', 'seuil', 'couleur', 'ordre', 'actif', 'formats', 'stock', 'stock_lisible'],
@@ -79,7 +83,7 @@ function doPost(e) {
     lock.waitLock(25000);
     try {
       if (body.action === 'upload') {
-        if (role !== 'admin') return json({ ok: false, error: 'Code admin requis' });
+        if (role !== 'admin' && ongletsCaisse(conf).indexOf('reception') < 0) return json({ ok: false, error: 'Code admin requis' });
         return json(upload(body));
       }
       if (body.action === 'ops') {
@@ -143,6 +147,13 @@ function tabKey(v) { return cleanName(v).normalize('NFD').replace(/[̀-ͯ]/g, ''
 function codes(conf) {
   return { admin: String(CODE_ADMIN || conf.PIN || '').trim(), caisse: String(CODE_CAISSE || conf.PIN_CAISSE || '').trim() };
 }
+function ongletsCaisse(conf) {
+  const v = ('ONGLETS_CAISSE' in conf) ? String(conf.ONGLETS_CAISSE) : ONGLETS_CAISSE_DEFAUT;
+  return v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[,;\s]+/).filter(String)
+    .map(function (w) { return w === 'ardoise' ? 'ardoises' : w; });
+}
+/* Droit sur une action : admin, ou code caisse si l'onglet est listé dans ONGLETS_CAISSE */
+function peut(ctx, cle) { return ctx.admin || (ctx.role === 'caisse' && ctx.onglets.indexOf(cle) >= 0); }
 function roleOf(code, conf) {
   const c = codes(conf), a = c.admin, k = c.caisse, p = String(code || '').trim();
   if (!a) return 'admin';
@@ -196,7 +207,7 @@ function applyOps(ops, device, conf) {
   const os = sh('Ops'), n = os.getLastRow();
   const done = new Set(n > 1 ? os.getRange(2, 1, n - 1, 1).getValues().map(function (r) { return String(r[0]); }) : []);
   const ctx = {
-    P: loadProducts(), device: S(device || ''), now: new Date(), admin: false,
+    P: loadProducts(), device: S(device || ''), now: new Date(), admin: false, role: '', onglets: ongletsCaisse(conf),
     out: { Ventes: [], Reglements: [], Mouvements: [], Receptions: [], Inventaires: [], Clotures: [], Journal: [], Ops: [] }
   };
   const results = [];
@@ -207,7 +218,7 @@ function applyOps(ops, device, conf) {
     try {
       const h = HANDLERS[op.type];
       if (!h) throw new Error('Type inconnu : ' + op.type);
-      ctx.admin = roleOf(op.pin, conf) === 'admin';
+      ctx.role = roleOf(op.pin, conf); ctx.admin = ctx.role === 'admin';
       h(op.data || {}, ctx);
       ctx.out.Ops.push([id, ctx.now, String(op.type)]);
       done.add(id);
@@ -306,7 +317,7 @@ const HANDLERS = {
   },
 
   reception: function (d, ctx) {
-    if (!ctx.admin) throw new Error('Code admin requis pour la réception');
+    if (!peut(ctx, 'reception')) throw new Error('Code admin requis pour la réception');
     const supplier = String(d.supplier || '').trim();
     if (!supplier) throw new Error('Fournisseur manquant');
     const lines = (d.lines || []).map(function (l) {
@@ -323,7 +334,7 @@ const HANDLERS = {
   },
 
   inventory: function (d, ctx) {
-    if (!ctx.admin) throw new Error("Code admin requis pour l'inventaire");
+    if (!peut(ctx, 'inventaire')) throw new Error("Code admin requis pour l'inventaire");
     const reason = String(d.reason || '').trim() || 'Inventaire';
     const at = toDate(d.at);
     const lines = (d.lines || []).map(function (l) {
@@ -354,7 +365,7 @@ const HANDLERS = {
   },
 
   product: function (d, ctx) {
-    if (!ctx.admin) throw new Error('Code admin requis');
+    if (!peut(ctx, 'gestion')) throw new Error('Code admin requis');
     const name = String(d.name || '').trim();
     if (!name) throw new Error('Nom manquant');
     const mode = d.mode === 'unit' ? 'unit' : 'ml';
@@ -380,6 +391,7 @@ const HANDLERS = {
 /* ---------------- État renvoyé à l'appli ---------------- */
 
 function state() {
+  if (!('ONGLETS_CAISSE' in config())) sh('Config').appendRow(['ONGLETS_CAISSE', ONGLETS_CAISSE_DEFAUT, 'Onglets ouverts au code CAISSE. Mots : caisse, ardoises, reception, stock, inventaire, cloture, gestion']);
   const cutoff = Date.now() - PERIODE_JOURS * 864e5;
   const keep = function (r) { const t = toDate(r.date).getTime(); return t >= cutoff; };
   const P = rows('Produits').filter(function (r) { return r.id !== ''; });
@@ -430,6 +442,7 @@ function state() {
     }),
     pinSet: !!codes(config()).admin,
     cashierPinSet: !!codes(config()).caisse,
+    ongletsCaisse: ongletsCaisse(config()),
     serverTime: new Date().toISOString()
   };
 }
@@ -478,6 +491,7 @@ function setup() {
     ['DOSSIER_ID', '', 'Rempli automatiquement : dossier Drive des justificatifs']
   ]);
   if (!('PIN_CAISSE' in config())) c.appendRow(['PIN_CAISSE', '', 'Code CAISSE : Caisse, Ardoises, Clôture. Vide = caisse sans code. Différent du PIN admin.']);
+  if (!('ONGLETS_CAISSE' in config())) c.appendRow(['ONGLETS_CAISSE', ONGLETS_CAISSE_DEFAUT, 'Onglets ouverts au code CAISSE. Mots : caisse, ardoises, reception, stock, inventaire, cloture, gestion']);
   if (sh('Produits').getLastRow() < 2) {
     const P = { list: exemples().map(function (p) { return { p: p, stock: 0 }; }), by: {}, dirty: true };
     saveProducts(P);

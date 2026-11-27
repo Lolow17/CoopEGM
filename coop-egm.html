@@ -497,7 +497,7 @@ function commit(type,data,opPin){const op={opId:uid(),type,data,at:new Date().to
 async function api(body){const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),30000);try{const r=await fetch(apiUrl(),{method:'POST',body:JSON.stringify(body),signal:ctl.signal});return await r.json();}catch(e){throw new Error(e.name==='AbortError'?'Délai dépassé':'Réseau indisponible');}finally{clearTimeout(t);}}
 async function apiGet(url){const u=url||apiUrl();const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),30000);try{const r=await fetch(u+(u.indexOf('?')>=0?'&':'?')+'action=state&_='+Date.now(),{signal:ctl.signal});return await r.json();}catch(e){throw new Error(e.name==='AbortError'?'Délai dépassé':'Réseau indisponible');}finally{clearTimeout(t);}}
 function scheduleFlush(ms){clearTimeout(flushTimer);flushTimer=setTimeout(flush,ms);}
-function setServer(state){db=normalize(state);store(dbKey(),db);lastSync=new Date().toISOString();store(K.last,lastSync);view=derive();refresh();}
+function setServer(state){const before=JSON.stringify(db.ongletsCaisse||null);db=normalize(state);store(dbKey(),db);lastSync=new Date().toISOString();store(K.last,lastSync);view=derive();if(before!==JSON.stringify(db.ongletsCaisse||null)&&!$('#lock').classList.contains('on')){renderTabs();if(!allowed(cur))go('pos');}refresh();}
 async function flush(){if(isLocal()||flushing||!role())return;if(!queue.length)return pull();flushing=true;setSync();const batch=queue.slice(0,30);
   try{const res=await api({action:'ops',ops:batch,device:cfg.device||'',pin:pin()});if(res&&res.auth){lockApp('Code modifié ou expiré : saisissez votre code. Les ventes en attente seront envoyées ensuite.');return;}if(!res||!res.ok)throw new Error((res&&res.error)||'Réponse invalide');
     const sent=new Set(batch.map(o=>o.opId));queue=queue.filter(o=>!sent.has(o.opId));store(K.q,queue);syncErr='';
@@ -515,12 +515,14 @@ function setSync(){const el=$('#sync');let c,t;
   el.className='sync '+c;$('em',el).textContent=t;$('#posteName').textContent=cfg.device||'Caisse';
   $('#lockBtn').style.display=isLocal()?'none':'';$('#roleName').textContent=isAdmin()?'Admin':'Caisse';}
 
-/* ---------- Codes d'accès : admin (tout) / caisse (Caisse, Ardoises, Clôture) ---------- */
+/* ---------- Codes d'accès : admin (tout) / caisse (onglets de la ligne ONGLETS_CAISSE du Sheet) ---------- */
 function pin(){try{return sessionStorage.getItem(K.pin)||'';}catch(e){return '';}}
 function role(){if(isLocal())return 'admin';try{return sessionStorage.getItem(K.role)||'';}catch(e){return '';}}
 const isAdmin=()=>role()==='admin';
-const ROLE_TABS={caisse:['pos','ardo','close']};
-const allowed=t=>isAdmin()||(ROLE_TABS[role()]||[]).indexOf(t)>=0;
+const WORD_TAB={caisse:'pos',ardoises:'ardo',ardoise:'ardo',reception:'recv',stock:'stock',cloture:'close',gestion:'manage'};
+const caisseWords=()=>Array.isArray(db.ongletsCaisse)?db.ongletsCaisse:['caisse','ardoises','cloture','reception'];
+const caisseCan=w=>role()==='caisse'&&caisseWords().indexOf(w)>=0;
+const allowed=t=>isAdmin()||(role()==='caisse'&&caisseWords().some(w=>WORD_TAB[w]===t));
 async function codeHash(c){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('v2|'+apiUrl()+'|'+c));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}catch(e){return '';}}
 /* Vérifie un code auprès du script. Hors ligne : dernier résultat connu sur cet appareil (empreinte, jamais le code en clair). */
 async function checkCode(c){const h=await codeHash(c),known=load(K.codes,{});let r;
@@ -679,7 +681,7 @@ function renderStock(){const ps=view.products.filter(p=>p.active!==false).sort(s
   $('#sList').innerHTML=ps.length?cats.map(c=>`<div class="sec" style="margin-top:4px">${esc(c)}</div>`+ps.filter(p=>(p.category||'Divers')===c).map(p=>{const st=Number(view.stock[p.id])||0,low=st<=p.low;const ref=Math.max(p.low*3,p.mode==='ml'?p.packageSize*2:24,1);const pct=Math.max(0,Math.min(100,st/ref*100));
     return `<div class="srow"><div style="min-width:0"><b><span class="cdot" style="background:${p.color||'#9aa3b2'};margin-right:8px"></span>${esc(p.name)}</b><div class="small mut" style="margin-top:3px">${p.formats.map(f=>`${esc(f.name)} : ${Math.max(0,Math.floor(st/f.qty))}`).join(' · ')}</div><div class="gauge"><i class="${low?'low':''}" style="width:${pct}%"></i></div></div><div class="sv"><b class="num${low?' bad':''}">${stockMain(p,st)}</b><div class="small ${low?'bad':'mut'}">${low?'Sous le seuil':stockSub(p,st)}</div></div></div>`;}).join('')).join(''):'<div class="empty">Aucun article.</div>';
   $('#iHist').innerHTML=view.inventories.slice().reverse().slice(0,8).map(i=>{const e=(i.lines||[]).filter(l=>l.diff);return `<div class="it"><div style="min-width:0"><b>${tLabel(i.at)}</b> · ${esc(i.reason)}<div class="small mut">${e.length?esc(e.map(l=>{const p=prod(view,l.pid);const v=p&&p.mode==='ml'?fmtVol(Math.abs(l.diff)):Math.abs(l.diff)+' u.';return (l.article||'')+' '+(l.diff>0?'+':'−')+v;}).join(' · ')):'Aucun écart'}</div></div><span class="pill${e.length?' bad':''}">${e.length} écart(s)</span></div>`;}).join('')||'<div class="empty small">Aucun inventaire.</div>';}
-async function openInventory(){if(!isAdmin())return toast('Code admin requis.');const ps=view.products.filter(p=>p.active!==false).sort(sortP);if(!ps.length)return toast('Aucun article.');
+async function openInventory(){if(!isAdmin()&&!caisseCan('inventaire'))return toast('Code admin requis.');const ps=view.products.filter(p=>p.active!==false).sort(sortP);if(!ps.length)return toast('Aucun article.');
   const rowsH=ps.map(p=>{const st=Math.max(0,Number(view.stock[p.id])||0);if(p.mode==='ml'){const full=Math.floor(st/p.packageSize),rest=Math.round((st-full*p.packageSize)/10);
     return `<div class="invr" data-pid="${p.id}" data-mode="ml" data-size="${p.packageSize}"><div><b>${esc(p.name)}</b><div class="small mut">Théorique ${stockMain(p,st)} · contenant de ${fmtVol(p.packageSize)}</div></div><label><span>Pleins</span><input type="number" inputmode="numeric" min="0" step="1" data-full value="${full}"></label><label><span>Entamé (cl)</span><input type="number" inputmode="decimal" min="0" step="1" data-rest value="${rest}"></label></div>`;}
     return `<div class="invr" data-pid="${p.id}" data-mode="unit"><div><b>${esc(p.name)}</b><div class="small mut">Théorique ${st} unité(s)</div></div><label><span>Unités</span><input type="number" inputmode="numeric" min="0" step="1" data-units value="${st}"></label><div></div></div>`;}).join('');
